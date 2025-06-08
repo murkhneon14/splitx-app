@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1006767762704",
+    "project_id": "splitx-20445",
+    "storage_bucket": "splitx-20445.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1006767762704:android:614cc2f0ccb38d74f9c995",
+        "android_client_info": {
+          "package_name": "com.example.splitx"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDm4vMPT5UTrjiBXcDZC1cQ62BZuju0fjk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
