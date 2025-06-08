@@ -23,21 +23,42 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.splitx"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 23
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        multiDexEnabled = true
+        
+        // Add this if you're using AndroidX Test
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Signing with debug keys for now
             signingConfig = signingConfigs.getByName("debug")
+            
+            // Disable all optimizations
+            isMinifyEnabled = false
+            isShrinkResources = false
+            isDebuggable = false
+            
+            // Disable other optimizations
+            isPseudoLocalesEnabled = false
+            isJniDebuggable = false
+            isRenderscriptDebuggable = false
+            renderscriptOptimLevel = 0
+            isZipAlignEnabled = true
+            isCrunchPngs = false
+            
+            // Remove ProGuard configuration
+        }
+        
+        debug {
+            // Disable minification for debug builds for faster builds
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
@@ -47,19 +68,26 @@ flutter {
 }
 
 dependencies {
-    // Import the Firebase BoM (Bill of Materials)
-    implementation(platform("com.google.firebase:firebase-bom:33.0.0"))
+    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.0")
     
-    // Firebase dependencies (versions are managed by the BOM)
+    // Firebase BoM (Bill of Materials)
+    implementation(platform("com.google.firebase:firebase-bom:32.8.1"))
     implementation("com.google.firebase:firebase-analytics-ktx")
     implementation("com.google.firebase:firebase-messaging-ktx")
     implementation("com.google.firebase:firebase-firestore-ktx")
     implementation("com.google.firebase:firebase-auth-ktx")
     
-    // AndroidX dependencies
+    // Multidex support
+    implementation("androidx.multidex:multidex:2.0.1")
+    
+    // Play Core (required for Flutter deferred components)
+    implementation("com.google.android.play:core:1.10.3")
+    implementation("com.google.android.play:core-ktx:1.8.1")
+    
+    // AndroidX Core
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
     
-    // Add core library desugaring
+    // Java 8+ API desugaring support
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }

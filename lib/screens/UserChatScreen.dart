@@ -2,12 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, TargetPlatform;
-import 'package:splitx/utils/chat_utils.dart';
-
-import 'package:intl/intl.dart' show DateFormat, NumberFormat;
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
+import 'package:intl/intl.dart';
+import '../config/debug_config.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../utils/chat_utils.dart';
 
 class UserChatScreen extends StatefulWidget {
   final String groupId;
@@ -494,17 +499,34 @@ class _UserChatScreenState extends State<UserChatScreen>
   }
 
   Future<void> _sendMessage() async {
-    final message = _messageController.text.trim();
-    if (message.isEmpty) return;
-
-    final user = _auth.currentUser;
-    if (user == null) return;
-
+    const tag = 'UserChatScreen';
     try {
-      // For direct messages
+      DebugConfig.log(tag, 'Starting message send process');
+      final message = _messageController.text.trim();
+      if (message.isEmpty) {
+        DebugConfig.log(tag, 'Message is empty, not sending');
+        return;
+      }
+
+      final user = _auth.currentUser;
+      if (user == null) {
+        DebugConfig.error(tag, 'No authenticated user found');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('You need to be logged in to send messages'),
+            ),
+          );
+        }
+        return;
+      }
+
+      DebugConfig.log(tag, 'Sending message as user: ${user.uid}');
+
       // Get current user's username from Firestore
       String? username;
       try {
+        DebugConfig.log(tag, 'Fetching user data from Firestore');
         final userDoc =
             await _firestore.collection('users').doc(user.uid).get();
         if (userDoc.exists) {
@@ -514,12 +536,21 @@ class _UserChatScreenState extends State<UserChatScreen>
               user.displayName ??
               user.email?.split('@').first ??
               'User';
+          DebugConfig.log(tag, 'Retrieved username: $username');
+        } else {
+          DebugConfig.log(tag, 'User document does not exist');
         }
-      } catch (e) {
-        debugPrint('Error getting user data: $e');
+      } catch (e, stackTrace) {
+        DebugConfig.error(
+          tag,
+          'Error getting user data',
+          error: e,
+          stackTrace: stackTrace,
+        );
       }
 
       final senderName = username ?? user.displayName ?? 'User';
+      DebugConfig.log(tag, 'Using sender name: $senderName');
 
       if (widget.groupId == 'direct_message') {
         final otherUserId = widget.members.firstWhere(
@@ -572,55 +603,150 @@ class _UserChatScreenState extends State<UserChatScreen>
         }, SetOptions(merge: true));
       } else {
         // For group chats
-        final messageDoc = await _firestore
-            .collection('groups')
-            .doc(widget.groupId)
-            .collection('messages')
-            .add({
-              'text': message,
-              'senderId': user.uid,
-              'senderName': senderName,
-              'timestamp': FieldValue.serverTimestamp(),
-              'type': 'text',
-            });
+        debugPrint(
+          '[_sendMessage] Sending group message to group: ${widget.groupId}',
+        );
 
-        // Get group members except sender
-        final groupDoc =
-            await _firestore.collection('groups').doc(widget.groupId).get();
-        final members = List<String>.from(groupDoc['members'] ?? []);
-        members.remove(user.uid);
+        // First check if group exists and get its data
+        final groupRef = _firestore.collection('groups').doc(widget.groupId);
+        DocumentSnapshot groupDoc;
 
-        if (members.isNotEmpty) {
-          // Get FCM tokens of all group members
-          final usersSnapshot =
-              await _firestore
-                  .collection('users')
-                  .where(FieldPath.documentId, whereIn: members)
-                  .get();
-
-          for (var doc in usersSnapshot.docs) {
-            final token = doc.data()['fcmToken'] as String?;
-            if (token != null) {
-              await _sendPushNotification(
-                token: token,
-                title: '${widget.groupName} - $senderName',
-                body: message,
-                chatId: widget.groupId,
-                senderId: user.uid,
-                messageId: messageDoc.id,
-                isGroup: true,
+        try {
+          groupDoc = await groupRef.get();
+          if (!groupDoc.exists) {
+            debugPrint(
+              '[_sendMessage] Error: Group ${widget.groupId} does not exist',
+            );
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Error: Group does not exist')),
               );
             }
+            return;
           }
+        } catch (e) {
+          debugPrint('[_sendMessage] Error fetching group data: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Error: Could not load group data')),
+            );
+          }
+          return;
+        }
+
+        // Add message to group's messages subcollection
+        DocumentReference messageDoc;
+        try {
+          messageDoc = await _firestore
+              .collection('groups')
+              .doc(widget.groupId)
+              .collection('messages')
+              .add({
+                'text': message,
+                'senderId': user.uid,
+                'senderName': senderName,
+                'timestamp': FieldValue.serverTimestamp(),
+                'type': 'text',
+              });
+
+          debugPrint('[_sendMessage] Message added with ID: ${messageDoc.id}');
+
+          // Update group's last message timestamp
+          await groupRef.update({
+            'lastMessage': message,
+            'lastMessageTime': FieldValue.serverTimestamp(),
+            'lastMessageSender': senderName,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          debugPrint('[_sendMessage] Group metadata updated');
+        } catch (e) {
+          debugPrint('[_sendMessage] Error adding message to group: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Error: Could not send message')),
+            );
+          }
+          return;
+        }
+
+        // Get group members except sender for notifications
+        try {
+          final members = List<String>.from(groupDoc['members'] ?? []);
+          members.remove(
+            user.uid,
+          ); // Remove current user from notification list
+
+          debugPrint(
+            '[_sendMessage] Sending notifications to ${members.length} group members',
+          );
+
+          if (members.isNotEmpty) {
+            // Get FCM tokens of all group members
+            final usersSnapshot =
+                await _firestore
+                    .collection('users')
+                    .where(FieldPath.documentId, whereIn: members)
+                    .get();
+
+            debugPrint(
+              '[_sendMessage] Found ${usersSnapshot.docs.length} user records',
+            );
+
+            int notificationCount = 0;
+            for (var doc in usersSnapshot.docs) {
+              try {
+                final token = doc.data()['fcmToken'] as String?;
+                if (token != null && token.isNotEmpty) {
+                  debugPrint(
+                    '[_sendMessage] Sending notification to user: ${doc.id}',
+                  );
+                  await _sendPushNotification(
+                    token: token,
+                    title: '${widget.groupName} - $senderName',
+                    body: message,
+                    chatId: widget.groupId,
+                    senderId: user.uid,
+                    messageId: messageDoc.id,
+                    isGroup: true,
+                  );
+                  notificationCount++;
+                } else {
+                  debugPrint(
+                    '[_sendMessage] No FCM token found for user: ${doc.id}',
+                  );
+                }
+              } catch (e) {
+                debugPrint(
+                  '[_sendMessage] Error sending notification to user ${doc.id}: $e',
+                );
+                // Continue with other users even if one fails
+              }
+            }
+            debugPrint(
+              '[_sendMessage] Successfully sent $notificationCount notifications',
+            );
+          } else {
+            debugPrint('[_sendMessage] No members to notify');
+          }
+        } catch (e) {
+          debugPrint('[_sendMessage] Error in notification process: $e');
+          // Don't fail the entire message send if notifications fail
         }
       }
 
       _messageController.clear();
-    } catch (e) {
+      debugPrint('[_sendMessage] Message sent and processed successfully');
+    } catch (e, stackTrace) {
+      debugPrint('[_sendMessage] Critical error sending message: $e');
+      debugPrint('Stack trace: $stackTrace');
+
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to send message: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to send message. Please try again.'),
+            duration: Duration(seconds: 3),
+          ),
+        );
       }
     }
   }
