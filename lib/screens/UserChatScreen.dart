@@ -13,6 +13,8 @@ import 'package:intl/intl.dart';
 import '../config/debug_config.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../utils/chat_utils.dart';
+import '../services/push_notification_helper.dart';
+import 'SubscriptionScreen.dart';
 
 class UserChatScreen extends StatefulWidget {
   final String groupId;
@@ -528,7 +530,7 @@ class _UserChatScreenState extends State<UserChatScreen>
     try {
       // Send settlement request message
       final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
-      await _firestore
+      final messageDoc = await _firestore
           .collection('chats')
           .doc(chatId)
           .collection('messages')
@@ -544,6 +546,15 @@ class _UserChatScreenState extends State<UserChatScreen>
         'requesterId': currentUser.uid,
         'payerId': _otherUserId,
       });
+
+      // Send push notification
+      await PushNotificationHelper.sendSettlementRequestNotification(
+        recipientId: _otherUserId!,
+        requesterName: currentUser.displayName ?? 'Someone',
+        amount: amount,
+        chatId: chatId,
+        messageId: messageDoc.id,
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -685,7 +696,7 @@ class _UserChatScreenState extends State<UserChatScreen>
 
       // Send payment confirmation message that requires approval
       final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
-      await _firestore
+      final messageDoc = await _firestore
           .collection('chats')
           .doc(chatId)
           .collection('messages')
@@ -701,6 +712,15 @@ class _UserChatScreenState extends State<UserChatScreen>
         'payerId': currentUser.uid,
         'recipientId': _otherUserId,
       });
+
+      // Send push notification
+      await PushNotificationHelper.sendPaymentConfirmationNotification(
+        recipientId: _otherUserId!,
+        payerName: currentUser.displayName ?? 'Someone',
+        amount: amount,
+        chatId: chatId,
+        messageId: messageDoc.id,
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -769,6 +789,14 @@ class _UserChatScreenState extends State<UserChatScreen>
         'amount': _balance.abs(),
         'isSettlement': true,
       });
+
+      // Send push notification
+      await PushNotificationHelper.sendSettlementCompletedNotification(
+        recipientId: _otherUserId!,
+        payerName: currentUser.displayName ?? 'Someone',
+        amount: _balance.abs(),
+        chatId: chatId,
+      );
 
       await batch.commit();
 
@@ -1054,6 +1082,19 @@ class _UserChatScreenState extends State<UserChatScreen>
 
           debugPrint('[_sendMessage] Message added with ID: ${messageDoc.id}');
 
+          // Send push notification for regular message
+          if (_otherUserId != null) {
+            final chatId = ChatUtils.generateChatId(user.uid, _otherUserId!);
+            await PushNotificationHelper.sendMessageNotification(
+              recipientId: _otherUserId!,
+              senderName: senderName,
+              messageText: message,
+              chatId: chatId,
+              messageId: messageDoc.id,
+              isGroup: false,
+            );
+          }
+
           // Update group's last message timestamp
           await groupRef.update({
             'lastMessage': message,
@@ -1272,6 +1313,7 @@ class _UserChatScreenState extends State<UserChatScreen>
     final isSettlement = message['isSettlement'] == true;
     final isSettlementRequest = message['isSettlementRequest'] == true;
     final isPaymentConfirmation = message['isPaymentConfirmation'] == true;
+    final isSubscriptionBilling = message['isSubscriptionBilling'] == true;
 
     if (isExpense) {
       return _buildExpenseMessage(message, isMe);
@@ -1287,6 +1329,10 @@ class _UserChatScreenState extends State<UserChatScreen>
 
     if (isPaymentConfirmation) {
       return _buildPaymentConfirmationMessage(message, isMe);
+    }
+
+    if (isSubscriptionBilling) {
+      return _buildSubscriptionBillingMessage(message);
     }
 
     return Container(
@@ -1594,7 +1640,7 @@ class _UserChatScreenState extends State<UserChatScreen>
             final currentUser = _auth.currentUser;
             if (currentUser != null && _otherUserId != null) {
               final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
-              await _firestore
+              final messageDoc = await _firestore
                   .collection('chats')
                   .doc(chatId)
                   .collection('messages')
@@ -1610,6 +1656,15 @@ class _UserChatScreenState extends State<UserChatScreen>
                 'payerId': currentUser.uid,
                 'recipientId': _otherUserId,
               });
+
+              // Send push notification
+              await PushNotificationHelper.sendPaymentConfirmationNotification(
+                recipientId: _otherUserId!,
+                payerName: currentUser.displayName ?? 'Someone',
+                amount: amount,
+                chatId: chatId,
+                messageId: messageDoc.id,
+              );
 
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1795,6 +1850,376 @@ class _UserChatScreenState extends State<UserChatScreen>
         ],
       ),
     );
+  }
+
+  Widget _buildSubscriptionBillingMessage(Map<String, dynamic> message) {
+    final subscriptionName = message['subscriptionName'] ?? 'Subscription';
+    final totalAmount = (message['totalAmount'] as num?)?.toDouble() ?? 0.0;
+    final perPersonAmount = (message['perPersonAmount'] as num?)?.toDouble() ?? 0.0;
+    final payerName = message['payerName'] ?? 'Unknown';
+    final paidBy = message['paidBy'] ?? '';
+    final billingCycle = message['billingCycle'] ?? 'Monthly';
+    final currentUser = _auth.currentUser;
+    final isPayerMe = paidBy == currentUser?.uid;
+    final formatter = NumberFormat.currency(symbol: '₹');
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.orange.shade50, Colors.deepOrange.shade50],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.orange.withOpacity(0.3), width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.orange.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with icon
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.orange,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.subscriptions,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '🔔 Subscription Billing',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        color: Colors.orange,
+                      ),
+                    ),
+                    Text(
+                      subscriptionName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          
+          // Billing details
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                _buildBillingDetailRow(
+                  'Total Amount',
+                  '${formatter.format(totalAmount)} / $billingCycle',
+                  Icons.payment,
+                ),
+                const Divider(height: 16),
+                _buildBillingDetailRow(
+                  'Your Share',
+                  formatter.format(perPersonAmount),
+                  Icons.person,
+                  highlight: true,
+                ),
+                const Divider(height: 16),
+                _buildBillingDetailRow(
+                  'Pay To',
+                  isPayerMe ? 'You (Payer)' : payerName,
+                  Icons.account_circle,
+                ),
+              ],
+            ),
+          ),
+          
+          // Action buttons
+          if (!isPayerMe) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => _handleSubscriptionPayment(message),
+                    icon: const Icon(Icons.payment, size: 20),
+                    label: const Text('Pay Now'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 2,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _openUPIApp(),
+                    icon: const Icon(Icons.open_in_new, size: 18),
+                    label: const Text('Open UPI'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.orange,
+                      side: const BorderSide(color: Colors.orange, width: 2),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.green.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.green.shade700, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'You are the payer. Others will pay you their share.',
+                      style: TextStyle(
+                        color: Colors.green.shade900,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          
+          const SizedBox(height: 8),
+          Text(
+            _formatTimestamp(message['timestamp']),
+            style: const TextStyle(fontSize: 10, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBillingDetailRow(String label, String value, IconData icon, {bool highlight = false}) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: highlight ? Colors.orange : Colors.grey.shade600),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.grey.shade700,
+              fontWeight: highlight ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: highlight ? 16 : 14,
+            fontWeight: highlight ? FontWeight.bold : FontWeight.w600,
+            color: highlight ? Colors.orange.shade900 : Colors.black87,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _handleSubscriptionPayment(Map<String, dynamic> message) async {
+    try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) return;
+
+      final perPersonAmount = (message['perPersonAmount'] as num?)?.toDouble() ?? 0.0;
+      final paidBy = message['paidBy'] ?? '';
+      final subscriptionName = message['subscriptionName'] ?? 'Subscription';
+      
+      // Get payer's UPI ID
+      String? payerUpiId;
+      try {
+        final payerDoc = await _firestore.collection('users').doc(paidBy).get();
+        if (payerDoc.exists) {
+          payerUpiId = payerDoc.data()?['upiId'] as String?;
+        }
+      } catch (e) {
+        debugPrint('Error fetching payer UPI: $e');
+      }
+
+      if (payerUpiId == null || payerUpiId.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Payer has not set up UPI ID yet'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Launch UPI payment
+      final upiUrl = 'upi://pay?pa=$payerUpiId&pn=${message['payerName']}&am=$perPersonAmount&cu=INR&tn=Subscription: $subscriptionName';
+      final uri = Uri.parse(upiUrl);
+      
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        
+        // After payment attempt, show confirmation dialog
+        if (mounted) {
+          await Future.delayed(const Duration(seconds: 2));
+          _showSubscriptionPaymentConfirmationDialog(message);
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No UPI app found. Please install a UPI app.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error handling subscription payment: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to initiate payment'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showSubscriptionPaymentConfirmationDialog(Map<String, dynamic> message) async {
+    final perPersonAmount = (message['perPersonAmount'] as num?)?.toDouble() ?? 0.0;
+    final formatter = NumberFormat.currency(symbol: '₹');
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Payment'),
+        content: Text(
+          'Did you complete the payment of ${formatter.format(perPersonAmount)}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not Yet'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+            ),
+            child: const Text('Yes, Paid'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _sendSubscriptionPaymentConfirmation(message);
+    }
+  }
+
+  Future<void> _sendSubscriptionPaymentConfirmation(Map<String, dynamic> message) async {
+    try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) return;
+
+      final perPersonAmount = (message['perPersonAmount'] as num?)?.toDouble() ?? 0.0;
+      final paidBy = message['paidBy'] ?? '';
+      final subscriptionName = message['subscriptionName'] ?? 'Subscription';
+      final formatter = NumberFormat.currency(symbol: '₹');
+      
+      // Get current user's name
+      String senderName = 'User';
+      try {
+        final userDoc = await _firestore.collection('users').doc(currentUser.uid).get();
+        if (userDoc.exists) {
+          senderName = userDoc.data()?['username'] ?? currentUser.displayName ?? 'User';
+        }
+      } catch (e) {
+        senderName = currentUser.displayName ?? 'User';
+      }
+
+      // Send confirmation message to group chat
+      await _firestore
+          .collection('groups')
+          .doc(widget.groupId)
+          .collection('messages')
+          .add({
+        'text': 'Payment confirmation: ${formatter.format(perPersonAmount)} for $subscriptionName',
+        'senderId': currentUser.uid,
+        'senderName': senderName,
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'subscription_payment_confirmation',
+        'amount': perPersonAmount,
+        'subscriptionName': subscriptionName,
+        'recipientId': paidBy,
+        'isPaymentConfirmation': true,
+        'status': 'pending',
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Payment confirmation sent!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error sending payment confirmation: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to send confirmation'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _handlePaymentConfirmation(Map<String, dynamic> message, bool approve) async {
@@ -2075,6 +2500,52 @@ class _UserChatScreenState extends State<UserChatScreen>
             ),
           ],
         ),
+        actions: [
+          // Show subscription button only for group chats (not 1:1 chats)
+          if (widget.groupId != 'direct_message')
+            IconButton(
+              icon: const Icon(Icons.subscriptions, color: Colors.orange),
+              tooltip: 'Manage Subscriptions',
+              onPressed: () async {
+                // Fetch group details to get member information
+                try {
+                  final groupDoc = await _firestore.collection('groups').doc(widget.groupId).get();
+                  if (groupDoc.exists) {
+                    final groupData = groupDoc.data();
+                    List<dynamic> memberDetails = [];
+                    
+                    if (groupData?['memberDetails'] != null) {
+                      memberDetails = groupData!['memberDetails'];
+                    } else if (groupData?['members'] != null) {
+                      memberDetails = (groupData!['members'] as List)
+                          .map((id) => {'id': id, 'username': id})
+                          .toList();
+                    }
+                    
+                    if (mounted) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => SubscriptionScreen(
+                            groupId: widget.groupId,
+                            groupName: widget.groupName,
+                            members: memberDetails,
+                          ),
+                        ),
+                      );
+                    }
+                  }
+                } catch (e) {
+                  debugPrint('Error opening subscriptions: $e');
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Failed to open subscriptions')),
+                    );
+                  }
+                }
+              },
+            ),
+        ],
       ),
       body: Column(
         children: [

@@ -89,14 +89,53 @@ class _ChatScreenState extends State<ChatScreen> {
                       .where(FieldPath.documentId, whereIn: friendIds)
                       .get();
 
-              final updatedFriends =
-                  friendsQuery.docs.map((doc) {
-                    return {
-                      'id': doc.id,
-                      'username': doc.data()['username'] ?? 'Unknown',
-                      'email': doc.data()['email'] ?? '',
-                    };
-                  }).toList();
+              final updatedFriends = await Future.wait(
+                friendsQuery.docs.map((doc) async {
+                  final friendId = doc.id;
+                  final friendData = doc.data();
+                  
+                  // Get the chat ID for 1:1 conversation
+                  final participants = [currentUser.uid, friendId]..sort();
+                  final chatId = participants.join('_');
+                  
+                  // Fetch last message time from chat metadata
+                  Timestamp? lastMessageTime;
+                  try {
+                    final chatDoc = await _firestore
+                        .collection('chats')
+                        .doc(chatId)
+                        .get();
+                    if (chatDoc.exists) {
+                      lastMessageTime = chatDoc.data()?['lastMessageTime'] as Timestamp?;
+                    }
+                  } catch (e) {
+                    debugPrint('Error fetching chat metadata: $e');
+                  }
+                  
+                  return {
+                    'id': friendId,
+                    'username': friendData['username'] ?? 'Unknown',
+                    'email': friendData['email'] ?? '',
+                    'lastMessageTime': lastMessageTime,
+                  };
+                }).toList(),
+              );
+
+              // Sort friends by latest message time (most recent first)
+              updatedFriends.sort((a, b) {
+                final aTime = a['lastMessageTime'] as Timestamp?;
+                final bTime = b['lastMessageTime'] as Timestamp?;
+                
+                // If both have timestamps, compare them
+                if (aTime != null && bTime != null) {
+                  return bTime.compareTo(aTime); // Descending order
+                }
+                // If only one has a timestamp, prioritize it
+                if (aTime != null) return -1;
+                if (bTime != null) return 1;
+                // If neither has a timestamp, maintain current order
+                return 0;
+              });
 
               if (mounted) {
                 setState(() {
@@ -153,11 +192,16 @@ class _ChatScreenState extends State<ChatScreen> {
     if (currentUser == null) return;
 
     try {
+      // Add friend to current user's friends array
       final userDocRef = _firestore.collection('users').doc(currentUser.uid);
-
-      // Add friendId to current user's friends array (if not already added)
       await userDocRef.update({
         'friends': FieldValue.arrayUnion([userId]),
+      });
+
+      // Add current user to the friend's friends array (bidirectional)
+      final friendDocRef = _firestore.collection('users').doc(userId);
+      await friendDocRef.update({
+        'friends': FieldValue.arrayUnion([currentUser.uid]),
       });
 
       ScaffoldMessenger.of(

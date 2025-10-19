@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'UserChatScreen.dart';
+import 'SubscriptionScreen.dart';
 
 class GroupScreen extends StatefulWidget {
   @override
@@ -284,6 +285,16 @@ class _GroupScreenState extends State<GroupScreen> {
                     icon: Icon(Icons.more_vert),
                     itemBuilder: (context) => [
                       PopupMenuItem(
+                        value: 'subscriptions',
+                        child: Row(
+                          children: [
+                            Icon(Icons.subscriptions, color: Colors.orange),
+                            SizedBox(width: 8),
+                            Text('Subscriptions'),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
                         value: 'add_people',
                         child: Row(
                           children: [
@@ -297,6 +308,25 @@ class _GroupScreenState extends State<GroupScreen> {
                     onSelected: (value) {
                       if (value == 'add_people') {
                         _showAddPeopleDialog(groupId, group['members'] ?? []);
+                      } else if (value == 'subscriptions') {
+                        // Get member details
+                        List<dynamic> memberDetails = [];
+                        if (group['memberDetails'] != null) {
+                          memberDetails = group['memberDetails'];
+                        } else if (group['members'] != null) {
+                          memberDetails = (group['members'] as List).map((id) => {'id': id, 'username': id}).toList();
+                        }
+                        
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => SubscriptionScreen(
+                              groupId: groupId,
+                              groupName: group['name']?.toString() ?? 'Group',
+                              members: memberDetails,
+                            ),
+                          ),
+                        );
                       }
                     },
                   ),

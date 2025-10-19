@@ -47,24 +47,18 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
   late List<Map<String, dynamic>> members;
   TextEditingController totalAmountController = TextEditingController();
   TextEditingController _expenseController = TextEditingController();
+  TextEditingController taxController = TextEditingController();
   bool isCustomSplit = false;
   String? selectedPayer;
+  String? selectedPayerId;
   String savedExpense = "";
   String savedAmount = "";
+  String savedTax = "";
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   @override
   void initState() {
     super.initState();
-
-    if (savedAmount.isNotEmpty) {
-      totalAmountController.text = savedAmount;
-    }
-    
-    // Initialize expense controller with saved expense if it exists
-    if (savedExpense.isNotEmpty && savedExpense != "No Expense") {
-      _expenseController.text = savedExpense;
-    }
 
     // Initialize members list from selectedFriends with null safety
     members =
@@ -94,6 +88,7 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
       selectedPayer = 'You'; // Default payer name if no members
     }
 
+    // Load saved data from home screen
     loadSavedData();
   }
 
@@ -108,33 +103,62 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
   Future<void> loadSavedData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     setState(() {
-      savedExpense = prefs.getString("expense") ?? "No Expense";
-      savedAmount = prefs.getString("amount") ?? "0";
+      savedExpense = prefs.getString("expense") ?? "";
+      savedAmount = prefs.getString("amount") ?? "";
+      savedTax = prefs.getString("tax") ?? "";
+      
+      // Populate text controllers with saved data
+      if (savedExpense.isNotEmpty && savedExpense != "No Expense") {
+        _expenseController.text = savedExpense;
+      }
+      if (savedAmount.isNotEmpty && savedAmount != "0") {
+        totalAmountController.text = savedAmount;
+        splitAmount(); // Recalculate split with loaded amount
+      }
+      if (savedTax.isNotEmpty && savedTax != "0") {
+        taxController.text = savedTax;
+      }
     });
+  }
+
+  // Save data back to SharedPreferences
+  Future<void> saveData() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setString("expense", _expenseController.text);
+    await prefs.setString("amount", totalAmountController.text);
+    await prefs.setString("tax", taxController.text);
   }
 
   void splitAmount() {
     double totalAmount = double.tryParse(totalAmountController.text) ?? 0;
+    double taxAmount = double.tryParse(taxController.text) ?? 0;
+    double grandTotal = totalAmount + taxAmount;
+    
     final selectedMembers = members.where((m) => m["selected"]).toList();
     int selectedCount = selectedMembers.length;
     
     if (selectedCount > 0 && !isCustomSplit) {
-      // Calculate the base amount and round to 2 decimal places
+      // Calculate tax per person
+      double taxPerPerson = selectedCount > 0 ? taxAmount / selectedCount : 0;
+      
+      // Calculate the base amount (without tax) and round to 2 decimal places
       double baseAmount = totalAmount / selectedCount;
       double roundedBase = double.parse(baseAmount.toStringAsFixed(2));
+      double roundedTaxPerPerson = double.parse(taxPerPerson.toStringAsFixed(2));
       
       // Calculate the total if we used rounded amounts for all but the last person
       double runningTotal = 0;
       List<double> amounts = [];
       
-      // For all but the last person, use the rounded amount
+      // For all but the last person, use the rounded amount (base + tax)
       for (int i = 0; i < selectedCount - 1; i++) {
-        amounts.add(roundedBase);
-        runningTotal += roundedBase;
+        double memberTotal = roundedBase + roundedTaxPerPerson;
+        amounts.add(memberTotal);
+        runningTotal += memberTotal;
       }
       
       // For the last person, use the remaining amount to ensure exact total
-      double lastAmount = (totalAmount * 100).roundToDouble() / 100 - runningTotal;
+      double lastAmount = (grandTotal * 100).roundToDouble() / 100 - runningTotal;
       amounts.add(lastAmount);
       
       setState(() {
@@ -201,13 +225,17 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
       final expenseRef = FirebaseFirestore.instance.collection('expenses').doc();
       final expenseId = expenseRef.id;
 
+      // Get the actual payer ID from selectedPayerId (from dropdown)
+      final actualPayerId = selectedPayerId ?? currentUser.uid;
+      final actualPayerName = selectedPayer ?? currentUser.displayName ?? 'You';
+      
       // Prepare expense data for history
       final Map<String, dynamic> expenseData = {
         'id': expenseId,
         'description': expenseName,
         'amount': totalAmount,
-        'payerId': currentUser.uid,
-        'payerName': currentUser.displayName ?? 'You',
+        'payerId': actualPayerId,
+        'payerName': actualPayerName,
         'timestamp': now,
         'participants': [],
         'shares': {},
@@ -248,12 +276,13 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
       // Save the expense to Firestore with payer's name
       await expenseRef.set({
         ...expenseData,
-        'payerName': currentUser.displayName ?? 'You',  // Ensure payerName is set in main document
+        'payerName': actualPayerName,  // Use the selected payer's name
+        'payerId': actualPayerId,  // Use the selected payer's ID
       });
       
       // Add the expense to the payer's history
       await _firestore.collection('userExpenses')
-          .doc(currentUser.uid)
+          .doc(actualPayerId)
           .collection('expenses')
           .doc(expenseId)
           .set({
@@ -267,7 +296,7 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
           
       // Add the expense to each participant's history
       for (var participantId in participantIds) {
-        if (participantId != currentUser.uid) { // Skip self for participants
+        if (participantId != actualPayerId) { // Skip the actual payer for participants
           await _firestore.collection('userExpenses')
               .doc(participantId)
               .collection('expenses')
@@ -278,8 +307,8 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
                 'description': expenseName,
                 'isPayer': false,
                 'timestamp': now,
-                'payerName': currentUser.displayName ?? 'You',  // Use consistent 'You' instead of 'Someone'
-                'payerId': currentUser.uid,
+                'payerName': actualPayerName,  // Use the selected payer's name
+                'payerId': actualPayerId,  // Use the selected payer's ID
               });
         }
       }
@@ -312,8 +341,8 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
 
         // Create the message data
         final messageData = {
-          'text': '${currentUser.displayName ?? 'Someone'} paid ₹${totalAmount.toStringAsFixed(2)} for $expenseName',
-          'senderId': currentUser.uid,
+          'text': '$actualPayerName paid ₹${totalAmount.toStringAsFixed(2)} for $expenseName',
+          'senderId': currentUser.uid,  // Person who created the expense
           'senderName': currentUser.displayName ?? 'You',
           'timestamp': now,
           'type': 'expense',
@@ -322,8 +351,8 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
           'userShare': amount, // Add user's share amount
           'description': expenseName,
           'expenseName': expenseName,
-          'payer': selectedPayer,
-          'payerId': currentUser.uid, // Add payerId for easier reference
+          'payer': actualPayerName,  // Use selected payer's name
+          'payerId': actualPayerId,  // Use selected payer's ID
           'recipientId': recipientId,
           'recipientName': recipientName,
           'isExpense': true,
@@ -620,6 +649,7 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
                                     setState(() {
                                       savedExpense = value;
                                     });
+                                    saveData(); // Save to SharedPreferences
                                   },
                                   decoration: InputDecoration(
                                     hintText: "Add a new expense",
@@ -652,6 +682,7 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
                                     setState(() {
                                       savedAmount = value;
                                     });
+                                    saveData(); // Save to SharedPreferences
                                     splitAmount();
                                   },
                                   keyboardType: TextInputType.number,
@@ -684,20 +715,35 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
                                 ),
                               ),
                               DropdownButton<String>(
-                                value: selectedPayer,
-                                items:
-                                    (members ?? []).map((member) {
-                                      return DropdownMenuItem<String>(
-                                        value: member["name"] ?? "",
-                                        child: Text(
-                                          member["name"] ?? "Unknown",
-                                        ),
-                                      );
-                                    }).toList(),
+                                value: () {
+                                  final validNames = members
+                                      .where((m) => m["name"] != null && m["name"].toString().isNotEmpty)
+                                      .map((m) => m["name"].toString())
+                                      .toSet()
+                                      .toList();
+                                  if (selectedPayer != null && validNames.contains(selectedPayer)) {
+                                    return selectedPayer;
+                                  }
+                                  return validNames.isNotEmpty ? validNames.first : null;
+                                }(),
+                                items: members
+                                    .where((m) => m["name"] != null && m["name"].toString().isNotEmpty)
+                                    .map((m) => m["name"].toString())
+                                    .toSet()
+                                    .map((name) => DropdownMenuItem<String>(
+                                      value: name,
+                                      child: Text(name),
+                                    )).toList(),
                                 onChanged: (value) {
-                                  setState(() {
-                                    selectedPayer = value;
-                                  });
+                                  if (value != null) {
+                                    setState(() {
+                                      selectedPayer = value;
+                                      selectedPayerId = members.firstWhere(
+                                        (m) => m["name"] == value,
+                                        orElse: () => {"id": null},
+                                      )["id"];
+                                    });
+                                  }
                                 },
                                 hint: const Text("Select Payer"),
                               ),
@@ -719,63 +765,156 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
                         });
                       },
                     ),
-                  ],
-                ),
-              ),
-            ),
-            // Add a null check for members list
-            if (members == null || members.isEmpty)
-              const Center(child: Text('No members selected'))
-            else
-              Expanded(
-                child: ListView.builder(
-                  itemCount: members.length,
-                  itemBuilder: (context, index) {
-                    // Ensure valid index
-                    if (index < 0 || index >= members.length) {
-                      return const SizedBox.shrink();
-                    }
-
-                    var member = members[index];
-                    if (member == null || member["name"] == null) {
-                      return const SizedBox.shrink();
-                    }
-
-                    return ListTile(
-                      title: Text(member["name"]?.toString() ?? "Unknown"),
-                      trailing: SizedBox(
-                        width: 100,
-                        child:
-                            isCustomSplit
-                                ? Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 6,
+                    SizedBox(height: 15),
+                    // Tax Field
+                    Container(
+                      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black12,
+                            blurRadius: 5,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.receipt_long,
+                            color: Colors.orange,
+                            size: 28,
+                          ),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  "Tax",
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
                                   ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.transparent,
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                      color: Colors.grey,
-                                      width: 0.5,
+                                ),
+                                if (taxController.text.isNotEmpty && double.tryParse(taxController.text) != null && double.parse(taxController.text) > 0)
+                                  Text(
+                                    "Divided equally",
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade600,
                                     ),
                                   ),
+                              ],
+                            ),
+                          ),
+                          SizedBox(
+                            width: 120,
+                            child: TextField(
+                              controller: taxController,
+                              decoration: InputDecoration(
+                                hintText: "0.00",
+                                prefixText: "₹ ",
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide(color: Colors.grey.shade300),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide(color: Colors.grey.shade300),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide(color: Colors.orange, width: 1.5),
+                                ),
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                filled: true,
+                                fillColor: Colors.grey.shade50,
+                              ),
+                              keyboardType: TextInputType.numberWithOptions(decimal: true),
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              onChanged: (value) {
+                                setState(() {
+                                  savedTax = value;
+                                });
+                                saveData(); // Save to SharedPreferences
+                                splitAmount();
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(height: 20),
+                    // Members List - Now part of scrollable content
+                    ...members.map((member) {
+                      if (member == null || member["name"] == null) {
+                        return const SizedBox.shrink();
+                      }
 
-                                  child: TextField(
-                                    controller: member["controller"],
-                                    keyboardType: TextInputType.number,
-                                    textAlign: TextAlign.center,
-                                    decoration: const InputDecoration(
-                                      border: InputBorder.none,
-                                    ),
-                                    style: const TextStyle(
-                                      fontWeight:
-                                          FontWeight
-                                              .bold, // Bold when custom split
-                                      fontSize: 16,
-                                    ),
-                                    onChanged: (value) {
-                                      setState(() {
+                      return Container(
+                        margin: EdgeInsets.only(bottom: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black12,
+                              blurRadius: 3,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                        child: ListTile(
+                          title: Text(
+                            member["name"]?.toString() ?? "Unknown",
+                            style: TextStyle(
+                              fontWeight: FontWeight.w500,
+                              fontSize: 16,
+                            ),
+                          ),
+                          trailing: SizedBox(
+                            width: 100,
+                            child:
+                                isCustomSplit
+                                    ? Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 6,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.transparent,
+                                        borderRadius: BorderRadius.circular(20),
+                                        border: Border.all(
+                                          color: Colors.grey,
+                                          width: 0.5,
+                                        ),
+                                      ),
+
+                                      child: TextField(
+                                        controller: member["controller"],
+                                        keyboardType: TextInputType.number,
+                                        textAlign: TextAlign.center,
+                                        decoration: const InputDecoration(
+                                          border: InputBorder.none,
+                                        ),
+                                        style: const TextStyle(
+                                          fontWeight:
+                                              FontWeight
+                                                  .bold, // Bold when custom split
+                                          fontSize: 16,
+                                        ),
+                                        onChanged: (value) {
+                                          setState(() {
                                         double enteredAmount =
                                             double.tryParse(value) ?? 0;
                                         double totalAmount =
@@ -852,30 +991,29 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
                                   ),
                                 )
                                 : Text(
-                                  "₹${member["amount"].toStringAsFixed(2)}",
+                                  "\u20b9${member["amount"].toStringAsFixed(2)}",
                                   style: const TextStyle(
-                                    fontWeight:
-                                        FontWeight
-                                            .bold, // Bold when equally split
+                                    fontWeight: FontWeight.w500,
                                     fontSize: 16,
-                                    color: Colors.green,
                                   ),
                                 ),
-                      ),
-
-                      leading: Checkbox(
-                        value: member["selected"],
-                        onChanged: (value) {
-                          setState(() {
-                            member["selected"] = value!;
-                            if (!isCustomSplit) splitAmount();
-                          });
-                        },
-                      ),
-                    );
-                  },
+                          ),
+                          leading: Checkbox(
+                            value: member["selected"],
+                            onChanged: (value) {
+                              setState(() {
+                                member["selected"] = value!;
+                                if (!isCustomSplit) splitAmount();
+                              });
+                            },
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ],
                 ),
               ),
+            ),
           ],
         ),
       ),
