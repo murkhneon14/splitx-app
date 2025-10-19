@@ -38,6 +38,10 @@ class _UserChatScreenState extends State<UserChatScreen>
   final FirebaseMessaging _fcm = FirebaseMessaging.instance;
   late final Stream<QuerySnapshot> _messagesStream;
   bool _isSettled = false;
+  double _balance = 0.0;
+  bool _isLoadingBalance = true;
+  String? _otherUserId;
+  String? _otherUserUpiId;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
 
@@ -305,6 +309,9 @@ class _UserChatScreenState extends State<UserChatScreen>
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
     );
 
+    // Calculate balance
+    _calculateBalance();
+
     // Log screen view
     _logScreenView();
   }
@@ -368,29 +375,425 @@ class _UserChatScreenState extends State<UserChatScreen>
     super.dispose();
   }
 
-  Future<void> _initiateUPIPayment() async {
-    // Dummy UPI details - replace with actual payment details
-    const upiId = 'test@upi';
-    const name = 'Recipient Name';
-    const amount = '1';
+  Future<void> _calculateBalance() async {
+    setState(() {
+      _isLoadingBalance = true;
+    });
+
+    try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) return;
+
+      // Get the other user ID
+      _otherUserId = widget.members.firstWhere(
+        (id) => id != currentUser.uid,
+        orElse: () => '',
+      );
+
+      if (_otherUserId == null || _otherUserId!.isEmpty) {
+        setState(() {
+          _isLoadingBalance = false;
+        });
+        return;
+      }
+
+      // Get other user's UPI ID
+      final otherUserDoc = await _firestore.collection('users').doc(_otherUserId).get();
+      if (otherUserDoc.exists) {
+        _otherUserUpiId = otherUserDoc.data()?['upiId'] as String?;
+      }
+
+      // Calculate balance from expenses
+      double balance = 0.0;
+
+      // Get all expenses where current user is involved
+      final expensesSnapshot = await _firestore
+          .collection('expenses')
+          .where('participants', arrayContains: currentUser.uid)
+          .get();
+
+      for (var expenseDoc in expensesSnapshot.docs) {
+        final data = expenseDoc.data();
+        final payerId = data['payerId'] as String?;
+        final shares = data['shares'] as Map<String, dynamic>?;
+        final settled = data['settled'] as Map<String, dynamic>? ?? {};
+
+        if (shares == null) continue;
+
+        // Check if this expense involves the other user
+        if (!data['participants'].contains(_otherUserId)) continue;
+
+        // Check if already settled between these two users
+        final settlementKey = '${currentUser.uid}_$_otherUserId';
+        final reverseSettlementKey = '${_otherUserId}_${currentUser.uid}';
+        if (settled[settlementKey] == true || settled[reverseSettlementKey] == true) {
+          continue;
+        }
+
+        // Calculate balance
+        if (payerId == currentUser.uid) {
+          // Current user paid, other user owes them
+          final otherUserShare = (shares[_otherUserId] as num?)?.toDouble() ?? 0.0;
+          balance += otherUserShare;
+        } else if (payerId == _otherUserId) {
+          // Other user paid, current user owes them
+          final currentUserShare = (shares[currentUser.uid] as num?)?.toDouble() ?? 0.0;
+          balance -= currentUserShare;
+        }
+      }
+
+      setState(() {
+        _balance = balance;
+        _isSettled = balance.abs() < 0.01; // Consider settled if balance is near zero
+        _isLoadingBalance = false;
+      });
+    } catch (e) {
+      debugPrint('Error calculating balance: $e');
+      setState(() {
+        _isLoadingBalance = false;
+      });
+    }
+  }
+
+  Future<void> _initiateSettlement() async {
+    if (_otherUserId == null) return;
+
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) return;
+
+    // Determine who owes whom
+    final amount = _balance.abs();
+    if (amount < 0.01) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Already settled up!')),
+      );
+      return;
+    }
+
+    // If current user owes money, they can pay directly
+    if (_balance < 0) {
+      await _initiateDirectPayment();
+    } else {
+      // If other user owes money, send a settlement request
+      await _sendSettlementRequest();
+    }
+  }
+
+  Future<void> _initiateDirectPayment() async {
+    // Show payment dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => _buildPaymentDialog(),
+    );
+
+    if (confirmed == true) {
+      // Launch UPI payment
+      await _launchUPIPayment();
+    }
+  }
+
+  Future<void> _sendSettlementRequest() async {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null || _otherUserId == null) return;
+
+    final formatter = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
+    final amount = _balance.abs();
+
+    // Confirm sending request
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Request Settlement'),
+        content: Text(
+          'Send a settlement request to ${widget.groupName} for ${formatter.format(amount)}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF4CAF50),
+            ),
+            child: const Text('Send Request'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // Send settlement request message
+      final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add({
+        'text': 'Settlement request for ${formatter.format(amount)}',
+        'senderId': currentUser.uid,
+        'senderName': currentUser.displayName ?? 'You',
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'settlement_request',
+        'amount': amount,
+        'isSettlementRequest': true,
+        'status': 'pending',
+        'requesterId': currentUser.uid,
+        'payerId': _otherUserId,
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Settlement request sent!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error sending settlement request: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to send request'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildPaymentDialog() {
+    final formatter = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
+    final amount = _balance.abs();
+
+    return AlertDialog(
+      title: const Text('Settle Up Payment'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Amount to pay: ${formatter.format(amount)}',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 16),
+          if (_otherUserUpiId != null && _otherUserUpiId!.isNotEmpty)
+            Text('UPI ID: $_otherUserUpiId')
+          else
+            const Text(
+              'Note: Recipient has not set up their UPI ID. You can still proceed with payment.',
+              style: TextStyle(fontSize: 12, color: Colors.orange),
+            ),
+          const SizedBox(height: 16),
+          const Text(
+            'After making the payment, please confirm to mark this as settled.',
+            style: TextStyle(fontSize: 12),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context, true),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF4CAF50),
+          ),
+          child: const Text('Pay Now'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _launchUPIPayment() async {
+    final amount = _balance.abs().toStringAsFixed(2);
+    final upiId = _otherUserUpiId ?? '';
+    final name = widget.groupName;
 
     final uri = Uri.parse(
-      'upi://pay?pa=$upiId&pn=$name&am=$amount&cu=INR&tn=SplitX Payment',
+      'upi://pay?pa=$upiId&pn=$name&am=$amount&cu=INR&tn=SplitX Settlement',
     );
 
     try {
-      final result = await launchUrl(uri);
-      if (!result) {
+      final result = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (result) {
+        // Show confirmation dialog after payment
         if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('No UPI app found')));
+          _showPaymentConfirmationDialog();
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No UPI app found')),
+          );
         }
       }
     } catch (e) {
+      debugPrint('Error launching UPI: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Error launching UPI app')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showPaymentConfirmationDialog() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Payment'),
+        content: const Text(
+          'Have you completed the payment successfully?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not Yet'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF4CAF50),
+            ),
+            child: const Text('Yes, Paid'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      // Send payment confirmation request to recipient for approval
+      await _sendPaymentConfirmation();
+    }
+  }
+
+  Future<void> _sendPaymentConfirmation() async {
+    try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null || _otherUserId == null) return;
+
+      final amount = _balance.abs();
+      final formatter = NumberFormat.currency(symbol: '₹', decimalDigits: 2);
+
+      // Send payment confirmation message that requires approval
+      final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add({
+        'text': 'Payment confirmation: ${formatter.format(amount)}',
+        'senderId': currentUser.uid,
+        'senderName': currentUser.displayName ?? 'You',
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'payment_confirmation',
+        'amount': amount,
+        'isPaymentConfirmation': true,
+        'status': 'pending',
+        'payerId': currentUser.uid,
+        'recipientId': _otherUserId,
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Payment confirmation sent! Waiting for approval...'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error sending payment confirmation: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to send confirmation'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _recordSettlement() async {
+    try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null || _otherUserId == null) return;
+
+      // Update all unsettled expenses between these two users
+      final expensesSnapshot = await _firestore
+          .collection('expenses')
+          .where('participants', arrayContains: currentUser.uid)
+          .get();
+
+      final batch = _firestore.batch();
+      final now = DateTime.now();
+
+      for (var expenseDoc in expensesSnapshot.docs) {
+        final data = expenseDoc.data();
+        if (!data['participants'].contains(_otherUserId)) continue;
+
+        final settled = data['settled'] as Map<String, dynamic>? ?? {};
+        final settlementKey = '${currentUser.uid}_$_otherUserId';
+        final reverseSettlementKey = '${_otherUserId}_${currentUser.uid}';
+
+        if (settled[settlementKey] != true && settled[reverseSettlementKey] != true) {
+          batch.update(expenseDoc.reference, {
+            'settled.$settlementKey': true,
+            'settledAt.$settlementKey': now,
+          });
+        }
+      }
+
+      // Create a settlement record
+      final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
+      await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add({
+        'text': 'Payment of ₹${_balance.abs().toStringAsFixed(2)} settled',
+        'senderId': currentUser.uid,
+        'senderName': currentUser.displayName ?? 'You',
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'settlement',
+        'amount': _balance.abs(),
+        'isSettlement': true,
+      });
+
+      await batch.commit();
+
+      setState(() {
+        _balance = 0.0;
+        _isSettled = true;
+        _animationController.forward();
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Settlement recorded successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error recording settlement: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to record settlement'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -866,9 +1269,24 @@ class _UserChatScreenState extends State<UserChatScreen>
 
   Widget _buildMessageBubble(Map<String, dynamic> message, bool isMe) {
     final isExpense = message['isExpense'] == true;
+    final isSettlement = message['isSettlement'] == true;
+    final isSettlementRequest = message['isSettlementRequest'] == true;
+    final isPaymentConfirmation = message['isPaymentConfirmation'] == true;
 
     if (isExpense) {
       return _buildExpenseMessage(message, isMe);
+    }
+
+    if (isSettlement) {
+      return _buildSettlementMessage(message, isMe);
+    }
+
+    if (isSettlementRequest) {
+      return _buildSettlementRequestMessage(message, isMe);
+    }
+
+    if (isPaymentConfirmation) {
+      return _buildPaymentConfirmationMessage(message, isMe);
     }
 
     return Container(
@@ -895,6 +1313,549 @@ class _UserChatScreenState extends State<UserChatScreen>
         ],
       ),
     );
+  }
+
+  Widget _buildSettlementMessage(Map<String, dynamic> message, bool isMe) {
+    final amount = (message['amount'] as num?)?.toDouble() ?? 0.0;
+    final formatter = NumberFormat.currency(symbol: '₹');
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.green[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.green.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.check_circle, color: Colors.green[700], size: 24),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isMe ? 'You settled up' : '${message['senderName']} settled up',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green[900],
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Amount: ${formatter.format(amount)}',
+                  style: TextStyle(
+                    color: Colors.green[800],
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _formatTimestamp(message['timestamp']),
+                  style: const TextStyle(fontSize: 10, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettlementRequestMessage(Map<String, dynamic> message, bool isMe) {
+    final amount = (message['amount'] as num?)?.toDouble() ?? 0.0;
+    final formatter = NumberFormat.currency(symbol: '₹');
+    final status = message['status'] as String? ?? 'pending';
+    final currentUser = _auth.currentUser;
+    final payerId = message['payerId'] as String?;
+    final isForMe = payerId == currentUser?.uid;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: status == 'approved'
+            ? Colors.green[50]
+            : status == 'rejected'
+                ? Colors.red[50]
+                : Colors.orange[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: status == 'approved'
+              ? Colors.green.withOpacity(0.3)
+              : status == 'rejected'
+                  ? Colors.red.withOpacity(0.3)
+                  : Colors.orange.withOpacity(0.3),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                status == 'approved'
+                    ? Icons.check_circle
+                    : status == 'rejected'
+                        ? Icons.cancel
+                        : Icons.payment,
+                color: status == 'approved'
+                    ? Colors.green[700]
+                    : status == 'rejected'
+                        ? Colors.red[700]
+                        : Colors.orange[700],
+                size: 24,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isMe
+                          ? 'Settlement Request Sent'
+                          : 'Settlement Request Received',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: status == 'approved'
+                            ? Colors.green[900]
+                            : status == 'rejected'
+                                ? Colors.red[900]
+                                : Colors.orange[900],
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Amount: ${formatter.format(amount)}',
+                      style: TextStyle(
+                        color: status == 'approved'
+                            ? Colors.green[800]
+                            : status == 'rejected'
+                                ? Colors.red[800]
+                                : Colors.orange[800],
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (status == 'pending' && isForMe) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => _handleSettlementRequest(message, true),
+                    icon: const Icon(Icons.check, size: 18),
+                    label: const Text('Pay Now'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4CAF50),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _handleSettlementRequest(message, false),
+                    icon: const Icon(Icons.close, size: 18),
+                    label: const Text('Decline'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red[700],
+                      side: BorderSide(color: Colors.red[300]!),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ] else if (status == 'approved') ...[
+            const SizedBox(height: 8),
+            Text(
+              '✓ Payment completed',
+              style: TextStyle(
+                color: Colors.green[700],
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ] else if (status == 'rejected') ...[
+            const SizedBox(height: 8),
+            Text(
+              '✗ Request declined',
+              style: TextStyle(
+                color: Colors.red[700],
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+          const SizedBox(height: 4),
+          Text(
+            _formatTimestamp(message['timestamp']),
+            style: const TextStyle(fontSize: 10, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleSettlementRequest(Map<String, dynamic> message, bool approve) async {
+    try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) return;
+
+      final messageId = message['id'] as String?;
+      if (messageId == null) {
+        // Find the message document
+        final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
+        final messagesQuery = await _firestore
+            .collection('chats')
+            .doc(chatId)
+            .collection('messages')
+            .where('isSettlementRequest', isEqualTo: true)
+            .where('status', isEqualTo: 'pending')
+            .where('payerId', isEqualTo: currentUser.uid)
+            .limit(1)
+            .get();
+
+        if (messagesQuery.docs.isEmpty) return;
+        final messageDoc = messagesQuery.docs.first;
+
+        if (approve) {
+          // Launch UPI payment
+          await _launchUPIPaymentForRequest(message, messageDoc.reference);
+        } else {
+          // Reject the request
+          await messageDoc.reference.update({'status': 'rejected'});
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Settlement request declined')),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error handling settlement request: $e');
+    }
+  }
+
+  Future<void> _launchUPIPaymentForRequest(
+    Map<String, dynamic> message,
+    DocumentReference messageRef,
+  ) async {
+    final amount = (message['amount'] as num?)?.toDouble() ?? 0.0;
+    final upiId = _otherUserUpiId ?? '';
+    final name = widget.groupName;
+
+    final uri = Uri.parse(
+      'upi://pay?pa=$upiId&pn=$name&am=${amount.toStringAsFixed(2)}&cu=INR&tn=SplitX Settlement',
+    );
+
+    try {
+      final result = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (result) {
+        // Show confirmation dialog
+        if (mounted) {
+          final confirmed = await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => AlertDialog(
+              title: const Text('Confirm Payment'),
+              content: const Text('Have you completed the payment successfully?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Not Yet'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF4CAF50),
+                  ),
+                  child: const Text('Yes, Paid'),
+                ),
+              ],
+            ),
+          );
+
+          if (confirmed == true) {
+            // Update settlement request status
+            await messageRef.update({'status': 'approved'});
+            
+            // Send payment confirmation for approval
+            final currentUser = _auth.currentUser;
+            if (currentUser != null && _otherUserId != null) {
+              final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
+              await _firestore
+                  .collection('chats')
+                  .doc(chatId)
+                  .collection('messages')
+                  .add({
+                'text': 'Payment confirmation: ₹${amount.toStringAsFixed(2)}',
+                'senderId': currentUser.uid,
+                'senderName': currentUser.displayName ?? 'You',
+                'timestamp': FieldValue.serverTimestamp(),
+                'type': 'payment_confirmation',
+                'amount': amount,
+                'isPaymentConfirmation': true,
+                'status': 'pending',
+                'payerId': currentUser.uid,
+                'recipientId': _otherUserId,
+              });
+
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Payment confirmation sent! Waiting for approval...'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+              }
+            }
+          }
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No UPI app found')),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error launching UPI: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Error launching UPI app')),
+        );
+      }
+    }
+  }
+
+  Widget _buildPaymentConfirmationMessage(Map<String, dynamic> message, bool isMe) {
+    final amount = (message['amount'] as num?)?.toDouble() ?? 0.0;
+    final formatter = NumberFormat.currency(symbol: '₹');
+    final status = message['status'] as String? ?? 'pending';
+    final currentUser = _auth.currentUser;
+    final recipientId = message['recipientId'] as String?;
+    final isForMe = recipientId == currentUser?.uid;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: status == 'approved'
+            ? Colors.green[50]
+            : status == 'rejected'
+                ? Colors.red[50]
+                : Colors.blue[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: status == 'approved'
+              ? Colors.green.withOpacity(0.3)
+              : status == 'rejected'
+                  ? Colors.red.withOpacity(0.3)
+                  : Colors.blue.withOpacity(0.3),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                status == 'approved'
+                    ? Icons.check_circle
+                    : status == 'rejected'
+                        ? Icons.cancel
+                        : Icons.pending_actions,
+                color: status == 'approved'
+                    ? Colors.green[700]
+                    : status == 'rejected'
+                        ? Colors.red[700]
+                        : Colors.blue[700],
+                size: 24,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isMe
+                          ? 'Payment Confirmation Received'
+                          : 'Payment Confirmation Sent',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: status == 'approved'
+                            ? Colors.green[900]
+                            : status == 'rejected'
+                                ? Colors.red[900]
+                                : Colors.blue[900],
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Amount: ${formatter.format(amount)}',
+                      style: TextStyle(
+                        color: status == 'approved'
+                            ? Colors.green[800]
+                            : status == 'rejected'
+                                ? Colors.red[800]
+                                : Colors.blue[800],
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (status == 'pending' && isForMe) ...[
+            const SizedBox(height: 12),
+            const Text(
+              'Please verify that you received the payment before approving.',
+              style: TextStyle(fontSize: 11, color: Colors.grey, fontStyle: FontStyle.italic),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => _handlePaymentConfirmation(message, true),
+                    icon: const Icon(Icons.check, size: 18),
+                    label: const Text('Approve'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4CAF50),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _handlePaymentConfirmation(message, false),
+                    icon: const Icon(Icons.close, size: 18),
+                    label: const Text('Reject'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red[700],
+                      side: BorderSide(color: Colors.red[300]!),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ] else if (status == 'approved') ...[
+            const SizedBox(height: 8),
+            Text(
+              '✓ Payment approved and settled',
+              style: TextStyle(
+                color: Colors.green[700],
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ] else if (status == 'rejected') ...[
+            const SizedBox(height: 8),
+            Text(
+              '✗ Payment rejected',
+              style: TextStyle(
+                color: Colors.red[700],
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ] else if (status == 'pending' && !isForMe) ...[
+            const SizedBox(height: 8),
+            Text(
+              '⏳ Waiting for approval...',
+              style: TextStyle(
+                color: Colors.blue[700],
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+          const SizedBox(height: 4),
+          Text(
+            _formatTimestamp(message['timestamp']),
+            style: const TextStyle(fontSize: 10, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handlePaymentConfirmation(Map<String, dynamic> message, bool approve) async {
+    try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) return;
+
+      // Find the payment confirmation message
+      final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
+      final messagesQuery = await _firestore
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .where('isPaymentConfirmation', isEqualTo: true)
+          .where('status', isEqualTo: 'pending')
+          .where('recipientId', isEqualTo: currentUser.uid)
+          .limit(1)
+          .get();
+
+      if (messagesQuery.docs.isEmpty) return;
+      final messageDoc = messagesQuery.docs.first;
+
+      if (approve) {
+        // Update confirmation status
+        await messageDoc.reference.update({'status': 'approved'});
+        
+        // Record the settlement
+        await _recordSettlement();
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Payment approved and settlement recorded!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        // Reject the payment confirmation
+        await messageDoc.reference.update({'status': 'rejected'});
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Payment confirmation rejected'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error handling payment confirmation: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to process confirmation'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildAppButton(String appName, String packageName) {
@@ -1217,37 +2178,58 @@ class _UserChatScreenState extends State<UserChatScreen>
                 ),
                 child: Opacity(
                   opacity: _fadeAnimation.value,
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed:
-                          _isSettled
-                              ? null
-                              : () {
-                                setState(() {
-                                  _isSettled = true;
-                                  _animationController.forward();
-                                });
-                              },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF4CAF50),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                  child: _isLoadingBalance
+                      ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: CircularProgressIndicator(),
                         ),
-                        elevation: 2,
-                        disabledBackgroundColor: Colors.grey[400],
-                      ),
-                      child: Text(
-                        _isSettled ? 'Nothing to settle' : 'Settle up payment!',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
+                      )
+                      : SizedBox(
+                        width: double.infinity,
+                        child: Column(
+                          children: [
+                            if (!_isSettled && _balance.abs() >= 0.01)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8.0),
+                                child: Text(
+                                  _balance > 0
+                                      ? 'They owe you: ₹${_balance.toStringAsFixed(2)}'
+                                      : 'You owe: ₹${_balance.abs().toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: _balance > 0 ? Colors.green[700] : Colors.red[700],
+                                  ),
+                                ),
+                              ),
+                            ElevatedButton(
+                              onPressed: _isSettled ? null : _initiateSettlement,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF4CAF50),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                elevation: 2,
+                                disabledBackgroundColor: Colors.grey[400],
+                              ),
+                              child: Text(
+                                _isSettled
+                                    ? 'All settled up! ✓'
+                                    : _balance > 0
+                                        ? 'Request Settlement'
+                                        : 'Settle up payment!',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                  ),
                 ),
               );
             },

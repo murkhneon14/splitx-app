@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 import '../widgets/custom_bottom_nav.dart';
@@ -15,6 +16,9 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   String? userName;
   String? _upiId; // UPI ID variable
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  bool _isLoadingUpi = true;
 
   @override
   void initState() {
@@ -31,36 +35,159 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
   }
 
-  // Load UPI ID from SharedPreferences
+  // Load UPI ID from Firestore (primary) and SharedPreferences (fallback)
   Future<void> _loadUpiId() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
     setState(() {
-      _upiId = prefs.getString("upi_id") ?? "Enter your UPI ID";
+      _isLoadingUpi = true;
     });
+
+    try {
+      final user = _auth.currentUser;
+      if (user != null) {
+        // Try to load from Firestore first
+        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        if (userDoc.exists) {
+          final firestoreUpiId = userDoc.data()?['upiId'] as String?;
+          if (firestoreUpiId != null && firestoreUpiId.isNotEmpty) {
+            setState(() {
+              _upiId = firestoreUpiId;
+              _isLoadingUpi = false;
+            });
+            // Also save to SharedPreferences for offline access
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString("upi_id", firestoreUpiId);
+            return;
+          }
+        }
+      }
+
+      // Fallback to SharedPreferences if Firestore doesn't have it
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _upiId = prefs.getString("upi_id");
+        _isLoadingUpi = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading UPI ID: $e');
+      // Fallback to SharedPreferences on error
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _upiId = prefs.getString("upi_id");
+        _isLoadingUpi = false;
+      });
+    }
   }
 
-  // Save UPI ID to SharedPreferences
+  // Save UPI ID to both Firestore and SharedPreferences
   Future<void> _saveUpiId(String upiId) async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString("upi_id", upiId);
-    setState(() {
-      _upiId = upiId;
-    });
+    try {
+      // Validate UPI ID format (basic validation)
+      if (upiId.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please enter a valid UPI ID'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // Show loading
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
+
+      final user = _auth.currentUser;
+      if (user != null) {
+        // Save to Firestore
+        await _firestore.collection('users').doc(user.uid).set({
+          'upiId': upiId,
+          'upiIdUpdatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+
+        // Save to SharedPreferences for offline access
+        final SharedPreferences prefs = await SharedPreferences.getInstance();
+        await prefs.setString("upi_id", upiId);
+
+        setState(() {
+          _upiId = upiId;
+        });
+
+        // Close loading dialog
+        if (mounted) {
+          Navigator.of(context).pop();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('UPI ID saved successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        // If not logged in with Firebase, just save to SharedPreferences
+        final SharedPreferences prefs = await SharedPreferences.getInstance();
+        await prefs.setString("upi_id", upiId);
+        setState(() {
+          _upiId = upiId;
+        });
+
+        if (mounted) {
+          Navigator.of(context).pop();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('UPI ID saved locally'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error saving UPI ID: $e');
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save UPI ID: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   // Show dialog to enter UPI ID
   Future<void> _showUpiDialog() async {
-    TextEditingController upiController = TextEditingController(text: _upiId);
+    TextEditingController upiController = TextEditingController(
+      text: _upiId != null && _upiId!.isNotEmpty ? _upiId : '',
+    );
 
     showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
           title: const Text("Enter UPI ID"),
-          content: TextField(
-            controller: upiController,
-            decoration: const InputDecoration(hintText: "Enter your UPI ID"),
-            keyboardType: TextInputType.text,
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: upiController,
+                decoration: const InputDecoration(
+                  hintText: "yourname@upi",
+                  labelText: "UPI ID",
+                  helperText: "e.g., 9876543210@paytm or name@okaxis",
+                  prefixIcon: Icon(Icons.payment),
+                ),
+                keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'This UPI ID will be used for receiving payments when settling expenses.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
           ),
           actions: [
             TextButton(
@@ -69,9 +196,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             ElevatedButton(
               onPressed: () {
-                _saveUpiId(upiController.text);
                 Navigator.pop(context);
+                _saveUpiId(upiController.text.trim());
               },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+              ),
               child: const Text("Save"),
             ),
           ],
@@ -179,11 +309,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const SizedBox(height: 40),
 
               // UPI ID Entry Section
-              ListTile(
-                leading: const Icon(Icons.payment, color: Colors.blue),
-                title: Text(_upiId ?? "Enter your UPI ID"),
-                trailing: const Icon(Icons.edit, color: Colors.black),
-                onTap: _showUpiDialog,
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 5,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: ListTile(
+                  leading: const Icon(Icons.payment, color: Colors.blue, size: 28),
+                  title: Text(
+                    _isLoadingUpi
+                        ? 'Loading...'
+                        : (_upiId != null && _upiId!.isNotEmpty)
+                            ? _upiId!
+                            : 'Enter your UPI ID',
+                    style: TextStyle(
+                      fontWeight: (_upiId != null && _upiId!.isNotEmpty)
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                      color: (_upiId != null && _upiId!.isNotEmpty)
+                          ? Colors.black87
+                          : Colors.grey,
+                    ),
+                  ),
+                  subtitle: const Text(
+                    'For receiving payments',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.edit, color: Colors.blue),
+                  onTap: _isLoadingUpi ? null : _showUpiDialog,
+                ),
               ),
 
               const SizedBox(height: 10),
