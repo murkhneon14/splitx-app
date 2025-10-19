@@ -69,6 +69,7 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
               "id": friend["id"]?.toString() ?? '',
               "selected": true,
               "amount": 0.0,
+              "baseAmount": 0.0,
               "controller": TextEditingController(),
             };
           }
@@ -77,6 +78,7 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
             "id": '',
             "selected": true,
             "amount": 0.0,
+            "baseAmount": 0.0,
             "controller": TextEditingController(),
           };
         }).toList();
@@ -130,35 +132,28 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
   }
 
   void splitAmount() {
-    double totalAmount = double.tryParse(totalAmountController.text) ?? 0;
-    double taxAmount = double.tryParse(taxController.text) ?? 0;
-    double grandTotal = totalAmount + taxAmount;
+    double totalAmount = double.tryParse(totalAmountController.text) ?? 0; // This is TOTAL including tax
     
     final selectedMembers = members.where((m) => m["selected"]).toList();
     int selectedCount = selectedMembers.length;
     
     if (selectedCount > 0 && !isCustomSplit) {
-      // Calculate tax per person
-      double taxPerPerson = selectedCount > 0 ? taxAmount / selectedCount : 0;
-      
-      // Calculate the base amount (without tax) and round to 2 decimal places
-      double baseAmount = totalAmount / selectedCount;
-      double roundedBase = double.parse(baseAmount.toStringAsFixed(2));
-      double roundedTaxPerPerson = double.parse(taxPerPerson.toStringAsFixed(2));
+      // Simply divide the total amount equally
+      double amountPerPerson = totalAmount / selectedCount;
+      double roundedAmount = double.parse(amountPerPerson.toStringAsFixed(2));
       
       // Calculate the total if we used rounded amounts for all but the last person
       double runningTotal = 0;
       List<double> amounts = [];
       
-      // For all but the last person, use the rounded amount (base + tax)
+      // For all but the last person, use the rounded amount
       for (int i = 0; i < selectedCount - 1; i++) {
-        double memberTotal = roundedBase + roundedTaxPerPerson;
-        amounts.add(memberTotal);
-        runningTotal += memberTotal;
+        amounts.add(roundedAmount);
+        runningTotal += roundedAmount;
       }
       
       // For the last person, use the remaining amount to ensure exact total
-      double lastAmount = (grandTotal * 100).roundToDouble() / 100 - runningTotal;
+      double lastAmount = (totalAmount * 100).roundToDouble() / 100 - runningTotal;
       amounts.add(lastAmount);
       
       setState(() {
@@ -443,8 +438,10 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
   }
 
   Future<bool> validateCustomSplit(BuildContext context) async {
-    double totalEntered = 0;
-    double totalAmount = double.tryParse(totalAmountController.text) ?? 0;
+    double totalBaseEntered = 0;
+    double totalAmount = double.tryParse(totalAmountController.text) ?? 0; // This is the TOTAL including tax
+    double taxAmount = double.tryParse(taxController.text) ?? 0;
+    double baseAmount = totalAmount - taxAmount; // Base amount without tax
     bool hasError = false;
 
     for (var member in members) {
@@ -453,7 +450,7 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
         if (amountText.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Please enter amount for all selected members'),
+              content: Text('Please enter base amount for all selected members'),
               backgroundColor: Colors.red,
               duration: Duration(seconds: 3),
             ),
@@ -466,7 +463,7 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
           hasError = true;
           break;
         }
-        totalEntered += amount;
+        totalBaseEntered += amount; // Sum of base amounts entered
       }
     }
 
@@ -487,19 +484,19 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
       return false;
     }
 
-    // Compare with a small epsilon to handle floating point precision issues
+    // Validate that base amounts sum to base total (total - tax)
     const epsilon = 0.01;
-    if ((totalEntered - totalAmount).abs() > epsilon) {
+    if ((totalBaseEntered - baseAmount).abs() > epsilon) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           final formatter = NumberFormat.currency(symbol: '₹');
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                'Total must be exactly ${formatter.format(totalAmount)}. Current total: ${formatter.format(totalEntered)}',
+                'Base amounts must sum to ${formatter.format(baseAmount)}. Current total: ${formatter.format(totalBaseEntered)}\n(Tax of ${formatter.format(taxAmount)} will be added automatically)',
               ),
               backgroundColor: Colors.red,
-              duration: const Duration(seconds: 3),
+              duration: const Duration(seconds: 4),
             ),
           );
         }
@@ -579,26 +576,62 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
 
                               try {
                                 // Send notifications
-                                await _sendExpenseNotifications();
+                                final success = await _sendExpenseNotifications();
 
-                                // Close loading dialog
-                                if (mounted) {
+                                if (!mounted) return;
+                                
+                                // Close loading dialog first
+                                if (Navigator.of(context).canPop()) {
                                   Navigator.of(context).pop();
-                                  // Go back to home screen
-                                  Navigator.of(
-                                    context,
-                                  ).popUntil((route) => route.isFirst);
+                                }
+                                
+                                if (success) {
+                                  // Clear saved data after successful save
+                                  SharedPreferences prefs = await SharedPreferences.getInstance();
+                                  await prefs.remove("expense");
+                                  await prefs.remove("amount");
+                                  await prefs.remove("tax");
+                                  
+                                  // Show success message
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Expense saved successfully!'),
+                                        backgroundColor: Colors.green,
+                                        duration: Duration(seconds: 2),
+                                      ),
+                                    );
+                                  }
+                                  
+                                  // Navigate back to home screen safely with a small delay
+                                  await Future.delayed(const Duration(milliseconds: 300));
+                                  
+                                  if (mounted && Navigator.of(context).canPop()) {
+                                    // Pop back to previous screen (NewExpense or Home)
+                                    Navigator.of(context).pop();
+                                    
+                                    // Check if we can pop again (to get to HomeScreen from NewExpense)
+                                    await Future.delayed(const Duration(milliseconds: 100));
+                                    if (mounted && Navigator.of(context).canPop()) {
+                                      Navigator.of(context).pop();
+                                    }
+                                  }
                                 }
                               } catch (e) {
+                                debugPrint('Error saving expense: $e');
                                 // Close loading dialog on error
-                                if (mounted) {
+                                if (mounted && Navigator.of(context).canPop()) {
                                   Navigator.of(context).pop();
+                                }
+                                
+                                if (mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
+                                    SnackBar(
                                       content: Text(
-                                        'Failed to save expense. Please try again.',
+                                        'Failed to save expense: ${e.toString()}',
                                       ),
-                                      duration: Duration(seconds: 3),
+                                      backgroundColor: Colors.red,
+                                      duration: const Duration(seconds: 3),
                                     ),
                                   );
                                 }
@@ -755,12 +788,25 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
                     SizedBox(height: 20),
                     SwitchListTile(
                       title: const Text("Custom Split"),
+                      subtitle: isCustomSplit 
+                          ? Text(
+                              double.tryParse(taxController.text) != null && double.parse(taxController.text) > 0
+                                  ? "Enter base amounts (tax will be added automatically)"
+                                  : "Enter each person's share",
+                              style: const TextStyle(fontSize: 12, color: Colors.grey),
+                            )
+                          : null,
                       value: isCustomSplit,
                       onChanged: (value) {
                         setState(() {
                           isCustomSplit = value;
                           if (!isCustomSplit) {
+                            // Switching back to equal split
                             splitAmount();
+                          } else {
+                            // Switching to custom split - pre-fill with current calculated amounts
+                            splitAmount(); // Calculate equal split first
+                            // The amounts are already set with tax included
                           }
                         });
                       },
@@ -915,79 +961,64 @@ class _ExpenseSplitScreenState extends State<ExpenseSplitScreen> {
                                         ),
                                         onChanged: (value) {
                                           setState(() {
-                                        double enteredAmount =
-                                            double.tryParse(value) ?? 0;
-                                        double totalAmount =
-                                            double.tryParse(
-                                              totalAmountController.text,
-                                            ) ??
-                                            0;
+                                            double enteredBaseAmount = double.tryParse(value) ?? 0;
+                                            double totalAmount = double.tryParse(totalAmountController.text) ?? 0;
+                                            double taxAmount = double.tryParse(taxController.text) ?? 0;
+                                            double baseTotal = totalAmount - taxAmount; // Total base without tax
+                                            
+                                            final selectedMembers = members.where((m) => m["selected"]).toList();
+                                            int selectedCount = selectedMembers.length;
+                                            double taxPerPerson = selectedCount > 0 ? taxAmount / selectedCount : 0;
 
-                                        // Ensure valid input
-                                        if (enteredAmount < 0) {
-                                          member["controller"]
-                                              .text = member["amount"]
-                                              .toStringAsFixed(2);
-                                          return;
-                                        }
+                                            // Ensure valid input
+                                            if (enteredBaseAmount < 0) {
+                                              member["controller"].text = (member["baseAmount"] ?? 0).toStringAsFixed(2);
+                                              return;
+                                            }
 
-                                        // Update the edited member's amount
-                                        member["amount"] = enteredAmount;
-                                        member["manual"] =
-                                            true; // Mark this member as manually edited
+                                            // Store base amount and calculate total (base + tax share)
+                                            member["baseAmount"] = enteredBaseAmount;
+                                            member["amount"] = enteredBaseAmount + taxPerPerson;
+                                            member["manual"] = true; // Mark as manually edited
 
-                                        // Get manually edited and unedited members separately
-                                        List<Map<String, dynamic>>
-                                        manuallyEdited =
-                                            members
-                                                .where(
-                                                  (m) => m["manual"] == true,
-                                                )
+                                            // Get manually edited and unedited members
+                                            List<Map<String, dynamic>> manuallyEdited = members
+                                                .where((m) => m["manual"] == true && m["selected"])
                                                 .toList();
-                                        List<Map<String, dynamic>>
-                                        uneditedMembers =
-                                            members
-                                                .where(
-                                                  (m) =>
-                                                      m["manual"] != true &&
-                                                      m["selected"],
-                                                )
+                                            List<Map<String, dynamic>> uneditedMembers = members
+                                                .where((m) => m["manual"] != true && m["selected"])
                                                 .toList();
 
-                                        // Calculate total manually entered amount
-                                        double totalEntered = manuallyEdited
-                                            .fold(
+                                            // Calculate total BASE amount entered manually
+                                            double totalBaseEntered = manuallyEdited.fold(
                                               0,
-                                              (sum, m) =>
-                                                  sum + (m["amount"] ?? 0),
+                                              (sum, m) => sum + (m["baseAmount"] ?? 0),
                                             );
 
-                                        // Prevent exceeding total
-                                        if (totalEntered > totalAmount) {
-                                          member["amount"] = 0;
-                                          member["controller"].text = "";
-                                          return;
-                                        }
+                                            // Prevent exceeding total base amount
+                                            if (totalBaseEntered > baseTotal) {
+                                              member["baseAmount"] = 0;
+                                              member["amount"] = taxPerPerson;
+                                              member["controller"].text = "";
+                                              return;
+                                            }
 
-                                        // Remaining amount to be split
-                                        double remainingAmount =
-                                            totalAmount - totalEntered;
-                                        int remainingMembers =
-                                            uneditedMembers.length;
+                                            // Calculate remaining BASE amount to be split
+                                            double remainingBaseAmount = baseTotal - totalBaseEntered;
+                                            int remainingMembers = uneditedMembers.length;
 
-                                        if (remainingMembers > 0) {
-                                          double splitAmount =
-                                              remainingAmount /
-                                              remainingMembers;
-
-                                          for (var m in uneditedMembers) {
-                                            m["amount"] = splitAmount;
-                                            m["controller"].text = splitAmount
-                                                .toStringAsFixed(2);
-                                          }
-                                        }
-                                      });
-                                    },
+                                            // Auto-split remaining base amount among unedited members
+                                            if (remainingMembers > 0) {
+                                              double splitBaseAmount = remainingBaseAmount / remainingMembers;
+                                              
+                                              for (var m in uneditedMembers) {
+                                                m["baseAmount"] = splitBaseAmount;
+                                                m["amount"] = splitBaseAmount + taxPerPerson;
+                                                m["controller"].text = splitBaseAmount.toStringAsFixed(2);
+                                              }
+                                            }
+                                          });
+                                        },
                                   ),
                                 )
                                 : Text(
