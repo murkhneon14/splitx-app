@@ -286,37 +286,16 @@ class PushNotificationHelper {
         ...?additionalData,
       };
 
-      // Save to Firestore - Firebase Extensions or Cloud Functions will process
-      final docRef = await _firestore.collection('fcmMessages').add({
-        'token': token,
+      // Save to Firestore - Cloud Functions will process this
+      final docRef = await _firestore.collection('notifications').add({
+        'to': token,  // Changed from 'token' to 'to' to match Cloud Function
         'notification': {
           'title': title,
           'body': body,
         },
         'data': data,
-        'android': {
-          'priority': 'high',
-          'notification': {
-            'channelId': 'chat_channel',
-            'sound': 'default',
-            'priority': 'high',
-            'clickAction': 'FLUTTER_NOTIFICATION_CLICK',
-          },
-        },
-        'apns': {
-          'payload': {
-            'aps': {
-              'sound': 'default',
-              'badge': 1,
-              'contentAvailable': true,
-            },
-          },
-          'headers': {
-            'apns-priority': '10',
-          },
-        },
-        'createdAt': FieldValue.serverTimestamp(),
         'status': 'pending',
+        'createdAt': FieldValue.serverTimestamp(),
       });
 
       debugPrint('✅ Notification queued: ${docRef.id}');

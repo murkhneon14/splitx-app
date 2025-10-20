@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../firebase_messaging_background.dart' show firebaseMessagingBackgroundHandler;
+import '../screens/UserChatScreen.dart';
+import 'navigation_service.dart';
 
 class NotificationService { 
   static final NotificationService _instance = NotificationService._internal();
@@ -55,12 +60,31 @@ class NotificationService {
       debugPrint('Initializing FlutterLocalNotificationsPlugin...');
       await _notifications.initialize(
         initializationSettings,
-        onDidReceiveNotificationResponse: (NotificationResponse response) {
-          debugPrint('Notification tapped: ${response.payload}');
+        onDidReceiveNotificationResponse: (NotificationResponse response) async {
+          debugPrint('🔔 ========== NOTIFICATION TAPPED ==========');
+          debugPrint('🔔 Payload: ${response.payload}');
+          debugPrint('🔔 Notification ID: ${response.id}');
+          
+          // Navigate to chat when notification is tapped
+          if (response.payload != null && response.payload!.isNotEmpty) {
+            try {
+              debugPrint('🔔 Attempting to parse payload...');
+              final data = jsonDecode(response.payload!);
+              debugPrint('🔔 Parsed data: $data');
+              await _navigateToChat(data);
+            } catch (e) {
+              debugPrint('❌ Error parsing notification payload: $e');
+              debugPrint('❌ Raw payload: ${response.payload}');
+            }
+          } else {
+            debugPrint('⚠️ No payload in notification!');
+          }
+          
           _notificationStreamController.add({
             'type': 'notification_tap',
             'payload': response.payload,
           });
+          debugPrint('🔔 ========================================');
         },
       );
 
@@ -227,13 +251,23 @@ class NotificationService {
 
       final notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       
+      // Encode data as JSON for payload
+      String jsonPayload = payload;
+      if (data != null && data.isNotEmpty) {
+        try {
+          jsonPayload = jsonEncode(data);
+        } catch (e) {
+          debugPrint('Error encoding data to JSON: $e');
+        }
+      }
+      
       debugPrint('Attempting to show notification with ID: $notificationId');
       await _notifications.show(
         notificationId,
         title,
         body,
         platformDetails,
-        payload: payload,
+        payload: jsonPayload,
       );
       
       debugPrint('=== NOTIFICATION SHOWN SUCCESSFULLY ===');
@@ -337,17 +371,126 @@ class NotificationService {
       'data': message.data,
     });
     
-    // You can add more specific handling based on message data
-    // For example, navigate to a specific chat screen
-    /*
-    if (message.data['type'] == 'chat') {
-      // Navigate to chat screen with chatId
-      Navigator.of(context).pushNamed(
-        '/chat',
-        arguments: message.data['chatId'],
+    // Navigate to chat screen
+    _navigateToChat(message.data);
+  }
+
+  // Navigate to chat screen based on notification data
+  Future<void> _navigateToChat(Map<String, dynamic> data) async {
+    try {
+      debugPrint('🚀 ========== NAVIGATING TO CHAT ==========');
+      debugPrint('🚀 Data received: $data');
+      
+      final chatId = data['chatId'];
+      final senderId = data['senderId'];
+      final type = data['type'];
+      
+      debugPrint('🚀 Extracted - chatId: $chatId, senderId: $senderId, type: $type');
+      
+      if (chatId == null || chatId.toString().isEmpty) {
+        debugPrint('❌ No chatId in notification data!');
+        return;
+      }
+      
+      // Get current user
+      debugPrint('🚀 Getting current user...');
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) {
+        debugPrint('❌ User not logged in!');
+        return;
+      }
+      debugPrint('✅ Current user: ${currentUser.uid}');
+      
+      // Get chat details from Firestore
+      debugPrint('🚀 Fetching chat document: $chatId');
+      final chatDoc = await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(chatId)
+          .get();
+      
+      if (!chatDoc.exists) {
+        debugPrint('❌ Chat not found: $chatId');
+        return;
+      }
+      debugPrint('✅ Chat document found');
+      
+      final chatData = chatDoc.data()!;
+      final participants = List<String>.from(chatData['participants'] ?? []);
+      
+      // Check if it's a group from notification data or chat data
+      final isGroupFromData = data['isGroup'] == 'true' || data['isGroup'] == true;
+      final isGroupFromChat = chatData['isGroup'] == true;
+      final isGroup = isGroupFromData || isGroupFromChat || participants.length > 2;
+      
+      debugPrint('🚀 Chat details - participants: $participants, isGroup: $isGroup');
+      debugPrint('🚀 isGroupFromData: $isGroupFromData, isGroupFromChat: $isGroupFromChat');
+      
+      // Get other user's ID (for direct chats)
+      final otherUserId = participants.firstWhere(
+        (id) => id != currentUser.uid,
+        orElse: () => '',
       );
+      
+      if (otherUserId.isEmpty && !isGroup) {
+        debugPrint('❌ Could not find other user in chat');
+        return;
+      }
+      
+      // Get chat name
+      String otherUserName = 'Chat';
+      
+      // First check if groupName is in notification data
+      if (data['groupName'] != null && data['groupName'].toString().isNotEmpty) {
+        otherUserName = data['groupName'];
+        debugPrint('🚀 Using groupName from notification data: $otherUserName');
+      } else if (isGroup) {
+        // Try to get from chat data
+        otherUserName = chatData['groupName'] ?? chatData['name'] ?? 'Group Chat';
+        debugPrint('🚀 Using groupName from chat data: $otherUserName');
+      } else if (!isGroup && otherUserId.isNotEmpty) {
+        // Get other user's details for direct chat
+        debugPrint('🚀 Fetching other user details: $otherUserId');
+        final userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(otherUserId)
+            .get();
+        
+        if (userDoc.exists) {
+          otherUserName = userDoc.data()?['username'] ?? 'User';
+          debugPrint('🚀 Other user name: $otherUserName');
+        }
+      }
+      
+      // Navigate to chat screen
+      debugPrint('🚀 Attempting to navigate...');
+      debugPrint('🚀 Chat name: $otherUserName');
+      debugPrint('🚀 Chat ID: $chatId');
+      debugPrint('🚀 Participants: $participants');
+      
+      final context = NavigationService.context;
+      debugPrint('🚀 Navigation context: ${context != null ? "Available" : "NULL"}');
+      
+      if (context != null) {
+        debugPrint('🚀 Pushing UserChatScreen...');
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => UserChatScreen(
+              groupName: otherUserName,
+              groupId: chatId,
+              members: participants,
+            ),
+          ),
+        );
+        debugPrint('✅ Successfully navigated to chat: $otherUserName');
+        debugPrint('🚀 ========================================');
+      } else {
+        debugPrint('❌ Navigation context is null - cannot navigate!');
+        debugPrint('🚀 ========================================');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Error navigating to chat: $e');
+      debugPrint('Stack trace: $stackTrace');
     }
-    */
   }
 
   // Dispose the stream controller when done

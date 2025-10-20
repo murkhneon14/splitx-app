@@ -1,4 +1,4 @@
-import * as functions from 'firebase-functions/v1';
+import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
 
 // Initialize Firebase Admin
@@ -23,7 +23,7 @@ interface NotificationData {
 // When a new notification document is created, send it via FCM
 export const sendPushNotification = functions.firestore
   .document('notifications/{notificationId}')
-  .onCreate(async (snapshot: admin.firestore.DocumentSnapshot, context: functions.EventContext) => {
+  .onCreate(async (snapshot, context) => {
     const notification = snapshot.data() as NotificationData | undefined;
     if (!notification) {
       console.error('No notification data found');
@@ -87,7 +87,7 @@ interface ChatMessage {
 // When a new message is added to a chat, create a notification for the recipient
 export const onMessageCreated = functions.firestore
   .document('chats/{chatId}/messages/{messageId}')
-  .onCreate(async (snapshot: admin.firestore.DocumentSnapshot, context: functions.EventContext) => {
+  .onCreate(async (snapshot, context) => {
     const message = snapshot.data() as ChatMessage | undefined;
     if (!message) {
       console.error('No message data found');
@@ -105,39 +105,81 @@ export const onMessageCreated = functions.firestore
       const chatData = chatDoc.data();
       if (!chatData) return null;
 
-      // Find the recipient (the other user in the chat)
+      // Check if it's a group chat
       const participants: string[] = chatData.participants || [];
-      const recipientId = participants.find((id: string) => id !== senderId);
-      if (!recipientId) return null;
+      const isGroup = chatData.isGroup === true || participants.length > 2;
+      const groupName = chatData.groupName || chatData.name || 'Group Chat';
 
-      // Get the recipient's FCM token
-      const userDoc = await admin.firestore().collection('users').doc(recipientId).get();
-      if (!userDoc.exists) return null;
+      console.log(`Processing message in ${isGroup ? 'group' : 'direct'} chat: ${chatId}`);
+      console.log(`Participants: ${participants.length}, isGroup: ${isGroup}`);
 
-      const userData = userDoc.data();
-      const token = userData?.fcmToken;
-      if (!token) return null;
+      // Get all recipients (all participants except the sender)
+      const recipientIds = participants.filter((id: string) => id !== senderId);
+      
+      if (recipientIds.length === 0) {
+        console.log('No recipients found');
+        return null;
+      }
 
-      // Create a notification document
-      const notification = {
-        to: token,
-        notification: {
-          title: `New message from ${senderName || 'Someone'}`,
-          body: text || 'You have a new message',
-        },
-        data: {
-          type: 'new_message',
-          chatId: chatId,
-          senderId: senderId,
-          messageId: snapshot.id,
-          click_action: 'FLUTTER_NOTIFICATION_CLICK',
-        },
-        status: 'pending',
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      };
+      console.log(`Sending notifications to ${recipientIds.length} recipient(s)`);
 
-      // Save the notification to Firestore (this will trigger the sendPushNotification function)
-      return admin.firestore().collection('notifications').add(notification);
+      // Create notifications for each recipient
+      const notificationPromises = recipientIds.map(async (recipientId: string) => {
+        try {
+          // Get the recipient's FCM token
+          const userDoc = await admin.firestore().collection('users').doc(recipientId).get();
+          if (!userDoc.exists) {
+            console.log(`User not found: ${recipientId}`);
+            return null;
+          }
+
+          const userData = userDoc.data();
+          const token = userData?.fcmToken;
+          
+          if (!token) {
+            console.log(`No FCM token for user: ${recipientId}`);
+            return null;
+          }
+
+          // Create notification title based on chat type
+          const notificationTitle = isGroup 
+            ? `${groupName} - ${senderName || 'Someone'}`
+            : `New message from ${senderName || 'Someone'}`;
+
+          // Create a notification document with proper data
+          const notification = {
+            to: token,
+            notification: {
+              title: notificationTitle,
+              body: text || 'You have a new message',
+            },
+            data: {
+              type: 'new_message',
+              chatId: chatId,
+              senderId: senderId,
+              messageId: snapshot.id,
+              isGroup: isGroup ? 'true' : 'false',
+              groupName: isGroup ? groupName : '',
+              click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            },
+            status: 'pending',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
+
+          console.log(`Creating notification for ${recipientId}: ${notificationTitle}`);
+
+          // Save the notification to Firestore (this will trigger the sendPushNotification function)
+          return admin.firestore().collection('notifications').add(notification);
+        } catch (error) {
+          console.error(`Error creating notification for ${recipientId}:`, error);
+          return null;
+        }
+      });
+
+      // Wait for all notifications to be created
+      await Promise.all(notificationPromises);
+      console.log('All notifications created successfully');
+      return null;
     } catch (error) {
       console.error('Error creating notification:', error);
       return null;

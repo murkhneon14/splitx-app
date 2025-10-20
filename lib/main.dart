@@ -4,6 +4,7 @@ import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'firebase_config.dart';
 import 'services/notification_service.dart';
+import 'services/navigation_service.dart';
 
 // Global BuildContext for error handling
 BuildContext? globalContext;
@@ -120,6 +121,7 @@ _error = 'Error loading app data. Please try again.';
     
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      navigatorKey: NavigationService.navigatorKey,
       scaffoldMessengerKey: rootScaffoldMessengerKey,
       home: _error != null
           ? Scaffold(
