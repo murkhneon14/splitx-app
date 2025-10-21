@@ -872,6 +872,11 @@ class _UserChatScreenState extends State<UserChatScreen>
       debugPrint('🔍 Found other user ID: $otherUserId');
 
       if (otherUserId.isNotEmpty) {
+        // Set the _otherUserId for use in other methods
+        setState(() {
+          _otherUserId = otherUserId;
+        });
+        
         // Create a consistent chat ID using both user IDs
         final chatId = ChatUtils.generateChatId(currentUser.uid, otherUserId);
 
@@ -2740,27 +2745,33 @@ class _UserChatScreenState extends State<UserChatScreen>
                           reverse: true,
                           padding: const EdgeInsets.all(16),
                           itemCount: messages.length,
+                          physics: const BouncingScrollPhysics(),
+                          cacheExtent: 1000,
+                          addAutomaticKeepAlives: true,
+                          addRepaintBoundaries: true,
                           itemBuilder: (context, index) {
                             final message =
                                 messages[index].data() as Map<String, dynamic>;
                             final isMe =
                                 message['senderId'] == _auth.currentUser?.uid;
 
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 4.0,
-                              ),
-                              child: Align(
-                                alignment:
-                                    isMe
-                                        ? Alignment.centerRight
-                                        : Alignment.centerLeft,
-                                child: ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                    maxWidth:
-                                        MediaQuery.of(context).size.width * 0.8,
+                            return RepaintBoundary(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 4.0,
+                                ),
+                                child: Align(
+                                  alignment:
+                                      isMe
+                                          ? Alignment.centerRight
+                                          : Alignment.centerLeft,
+                                  child: ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxWidth:
+                                          MediaQuery.of(context).size.width * 0.8,
+                                    ),
+                                    child: _buildMessageBubble(message, isMe),
                                   ),
-                                  child: _buildMessageBubble(message, isMe),
                                 ),
                               ),
                             );

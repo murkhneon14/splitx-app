@@ -142,6 +142,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 SizedBox(height: 46),
                 Expanded(
                   child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
                     keyboardDismissBehavior:
                         ScrollViewKeyboardDismissBehavior.onDrag,
                     padding: EdgeInsets.symmetric(horizontal: 20),
