@@ -93,25 +93,24 @@ class _ChatScreenState extends State<ChatScreen> {
                 friendsQuery.docs.map((doc) async {
                   final friendId = doc.id;
                   final friendData = doc.data();
-                  
+
                   // Get the chat ID for 1:1 conversation
                   final participants = [currentUser.uid, friendId]..sort();
                   final chatId = participants.join('_');
-                  
+
                   // Fetch last message time from chat metadata
                   Timestamp? lastMessageTime;
                   try {
-                    final chatDoc = await _firestore
-                        .collection('chats')
-                        .doc(chatId)
-                        .get();
+                    final chatDoc =
+                        await _firestore.collection('chats').doc(chatId).get();
                     if (chatDoc.exists) {
-                      lastMessageTime = chatDoc.data()?['lastMessageTime'] as Timestamp?;
+                      lastMessageTime =
+                          chatDoc.data()?['lastMessageTime'] as Timestamp?;
                     }
                   } catch (e) {
                     debugPrint('Error fetching chat metadata: $e');
                   }
-                  
+
                   return {
                     'id': friendId,
                     'username': friendData['username'] ?? 'Unknown',
@@ -125,7 +124,7 @@ class _ChatScreenState extends State<ChatScreen> {
               updatedFriends.sort((a, b) {
                 final aTime = a['lastMessageTime'] as Timestamp?;
                 final bTime = b['lastMessageTime'] as Timestamp?;
-                
+
                 // If both have timestamps, compare them
                 if (aTime != null && bTime != null) {
                   return bTime.compareTo(aTime); // Descending order
@@ -275,36 +274,39 @@ class _ChatScreenState extends State<ChatScreen> {
     final groupNameController = TextEditingController();
     final groupName = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Create Group'),
-        content: TextField(
-          controller: groupNameController,
-          decoration: const InputDecoration(
-            labelText: 'Group Name',
-            hintText: 'Enter group name',
-            border: OutlineInputBorder(),
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Create Group'),
+            content: TextField(
+              controller: groupNameController,
+              decoration: const InputDecoration(
+                labelText: 'Group Name',
+                hintText: 'Enter group name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final name = groupNameController.text.trim();
+                  if (name.isNotEmpty) {
+                    Navigator.pop(context, name);
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Please enter a group name'),
+                      ),
+                    );
+                  }
+                },
+                child: const Text('Create'),
+              ),
+            ],
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final name = groupNameController.text.trim();
-              if (name.isNotEmpty) {
-                Navigator.pop(context, name);
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter a group name')),
-                );
-              }
-            },
-            child: const Text('Create'),
-          ),
-        ],
-      ),
     );
 
     if (groupName == null || groupName.trim().isEmpty) return;
@@ -314,24 +316,32 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       // Get selected friends' data
-      final selectedFriends = friends.where((f) => _selectedFriendIds.contains(f['id'])).toList();
-      
+      final selectedFriends =
+          friends.where((f) => _selectedFriendIds.contains(f['id'])).toList();
+
       // Create members list with user data
-      final members = selectedFriends.map((friend) => {
-        'id': friend['id'],
-        'username': friend['username'] ?? 'Unknown',
-        'email': friend['email'] ?? '',
-      }).toList();
+      final members =
+          selectedFriends
+              .map(
+                (friend) => {
+                  'id': friend['id'],
+                  'username': friend['username'] ?? 'Unknown',
+                  'email': friend['email'] ?? '',
+                },
+              )
+              .toList();
 
       // Add current user to members with their actual username
       try {
-        final currentUserDoc = await _firestore.collection('users').doc(currentUser.uid).get();
+        final currentUserDoc =
+            await _firestore.collection('users').doc(currentUser.uid).get();
         final userData = currentUserDoc.data();
-        final currentUsername = userData?['username']?.toString() ?? 
-                              currentUser.displayName ?? 
-                              currentUser.email?.split('@').first ?? 
-                              'User';
-        
+        final currentUsername =
+            userData?['username']?.toString() ??
+            currentUser.displayName ??
+            currentUser.email?.split('@').first ??
+            'User';
+
         members.add({
           'id': currentUser.uid,
           'username': currentUsername,
@@ -341,7 +351,10 @@ class _ChatScreenState extends State<ChatScreen> {
         // Fallback if there's an error fetching user data
         members.add({
           'id': currentUser.uid,
-          'username': currentUser.displayName ?? currentUser.email?.split('@').first ?? 'User',
+          'username':
+              currentUser.displayName ??
+              currentUser.email?.split('@').first ??
+              'User',
           'email': currentUser.email ?? '',
         });
       }
@@ -358,10 +371,10 @@ class _ChatScreenState extends State<ChatScreen> {
         // Creating a new group
         groupData['createdBy'] = currentUser.uid;
         groupData['createdAt'] = FieldValue.serverTimestamp();
-        
+
         // Add to Firestore
         final docRef = await _firestore.collection('groups').add(groupData);
-        
+
         // Update the group document with its own ID
         await docRef.update({'id': docRef.id});
       } else {
@@ -372,7 +385,11 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Group "$groupName" ${groupId == null ? 'created' : 'updated'} successfully!')),
+          SnackBar(
+            content: Text(
+              'Group "$groupName" ${groupId == null ? 'created' : 'updated'} successfully!',
+            ),
+          ),
         );
 
         // Reset selection state
@@ -445,7 +462,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: TextField(
                             controller: _searchController,
                             decoration: InputDecoration(
-                              hintText: "Search Friends or Groups",
+                              hintText: "Search Friends and add them",
                               border: InputBorder.none,
                             ),
                             onSubmitted: (val) => _searchUser(val.trim()),
@@ -584,16 +601,23 @@ class _ChatScreenState extends State<ChatScreen> {
                                               builder:
                                                   (context) => UserChatScreen(
                                                     groupId: 'direct_message',
-                                                    groupName: friend['username'],
+                                                    groupName:
+                                                        friend['username'],
                                                     members: [
-                                                      friend['id'],  // Use user ID instead of username
-                                                      FirebaseAuth.instance.currentUser?.uid ?? '',
+                                                      friend['id'], // Use user ID instead of username
+                                                      FirebaseAuth
+                                                              .instance
+                                                              .currentUser
+                                                              ?.uid ??
+                                                          '',
                                                     ],
                                                   ),
                                             ),
                                           );
                                           // Clear the message controller after navigation
-                                          if (_messageController.text.isNotEmpty) {
+                                          if (_messageController
+                                              .text
+                                              .isNotEmpty) {
                                             _messageController.clear();
                                           }
                                         }

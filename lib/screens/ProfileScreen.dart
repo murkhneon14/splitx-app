@@ -30,17 +30,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // Load username from Firestore, Firebase Auth, or fallback to SharedPreferences
   Future<void> _loadUsername() async {
     final currentUser = _auth.currentUser;
-    
+
     if (currentUser == null) {
       setState(() {
         userName = "Guest";
       });
       return;
     }
-    
+
     try {
       // First try to get username from Firestore
-      final userDoc = await _firestore.collection('users').doc(currentUser.uid).get();
+      final userDoc =
+          await _firestore.collection('users').doc(currentUser.uid).get();
       if (userDoc.exists) {
         final firestoreUsername = userDoc.data()?['username'] as String?;
         if (firestoreUsername != null && firestoreUsername.isNotEmpty) {
@@ -56,19 +57,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       debugPrint('Error loading username from Firestore: $e');
     }
-    
+
     // Fallback to Firebase Auth display name
-    if (currentUser.displayName != null && currentUser.displayName!.isNotEmpty) {
+    if (currentUser.displayName != null &&
+        currentUser.displayName!.isNotEmpty) {
       setState(() {
         userName = currentUser.displayName!;
       });
       return;
     }
-    
+
     // Fallback to SharedPreferences
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final savedName = prefs.getString("username");
-    
+
     setState(() {
       userName = savedName ?? "Guest";
     });
@@ -84,7 +86,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final user = _auth.currentUser;
       if (user != null) {
         // Try to load from Firestore first
-        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        final userDoc =
+            await _firestore.collection('users').doc(user.uid).get();
         if (userDoc.exists) {
           final firestoreUpiId = userDoc.data()?['upiId'] as String?;
           if (firestoreUpiId != null && firestoreUpiId.isNotEmpty) {
@@ -238,9 +241,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 Navigator.pop(context);
                 _saveUpiId(upiController.text.trim());
               },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
               child: const Text("Save"),
             ),
           ],
@@ -361,20 +362,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ],
                 ),
                 child: ListTile(
-                  leading: const Icon(Icons.payment, color: Colors.blue, size: 28),
+                  leading: const Icon(
+                    Icons.payment,
+                    color: Colors.blue,
+                    size: 28,
+                  ),
                   title: Text(
                     _isLoadingUpi
                         ? 'Loading...'
                         : (_upiId != null && _upiId!.isNotEmpty)
-                            ? _upiId!
-                            : 'Enter your UPI ID',
+                        ? _upiId!
+                        : 'Enter your UPI ID',
                     style: TextStyle(
-                      fontWeight: (_upiId != null && _upiId!.isNotEmpty)
-                          ? FontWeight.w600
-                          : FontWeight.normal,
-                      color: (_upiId != null && _upiId!.isNotEmpty)
-                          ? Colors.black87
-                          : Colors.grey,
+                      fontWeight:
+                          (_upiId != null && _upiId!.isNotEmpty)
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                      color:
+                          (_upiId != null && _upiId!.isNotEmpty)
+                              ? Colors.black87
+                              : Colors.grey,
                     ),
                   ),
                   subtitle: const Text(
