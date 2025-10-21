@@ -618,9 +618,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                     final data = doc.data() as Map<String, dynamic>;
                     final isActive = data['isActive'] ?? true;
                     
-                    final iconCodePoint = data['iconCodePoint'] ?? Icons.subscriptions.codePoint;
-                    final colorValue = data['colorValue'] ?? Colors.blue.value;
-                    final icon = IconData(iconCodePoint, fontFamily: 'MaterialIcons');
+                    final colorValue = data['colorValue'] as int? ?? Colors.blue.value;
+                    const icon = IconData(0xe530, fontFamily: 'MaterialIcons'); // subscriptions icon
                     final color = Color(colorValue);
 
                     final nextBillingDate = data['nextBillingDate'] as Timestamp?;
