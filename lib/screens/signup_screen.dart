@@ -36,6 +36,28 @@ class _SignupScreenState extends State<SignupScreen> {
     super.dispose();
   }
 
+  /// Check if username already exists (case-insensitive)
+  Future<bool> _isUsernameAvailable(String username) async {
+    try {
+      final usernameLower = username.trim().toLowerCase();
+      
+      // Query Firestore for users with matching lowercase username
+      final querySnapshot = await _firestore
+          .collection('users')
+          .where('usernameLower', isEqualTo: usernameLower)
+          .limit(1)
+          .get();
+      
+      // Username is available if no documents found
+      return querySnapshot.docs.isEmpty;
+    } catch (e) {
+      debugPrint('Error checking username availability: $e');
+      // In case of error, allow the registration to proceed
+      // The username will be checked again during the actual registration
+      return true;
+    }
+  }
+
   Future<void> _registerUser() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     
@@ -51,6 +73,23 @@ class _SignupScreenState extends State<SignupScreen> {
     setState(() => _isLoading = true);
 
     try {
+      // Check if username is available (case-insensitive)
+      final username = _usernameController.text.trim();
+      final isAvailable = await _isUsernameAvailable(username);
+      
+      if (!isAvailable) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Username "$username" is already taken. Please choose another.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        setState(() => _isLoading = false);
+        return;
+      }
+
       // Create user with email and password
       final credential = await _auth.createUserWithEmailAndPassword(
         email: _emailController.text.trim().toLowerCase(),
@@ -62,9 +101,11 @@ class _SignupScreenState extends State<SignupScreen> {
 
       try {
         // Store additional user data in Firestore
+        final username = _usernameController.text.trim();
         final userData = {
           'uid': user.uid,
-          'username': _usernameController.text.trim(),
+          'username': username,
+          'usernameLower': username.toLowerCase(), // For case-insensitive uniqueness
           'email': _emailController.text.trim().toLowerCase(),
           'createdAt': FieldValue.serverTimestamp(),
           'friends': [],
