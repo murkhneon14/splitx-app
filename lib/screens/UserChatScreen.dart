@@ -402,7 +402,8 @@ class _UserChatScreenState extends State<UserChatScreen>
       }
 
       // Get other user's UPI ID
-      final otherUserDoc = await _firestore.collection('users').doc(_otherUserId).get();
+      final otherUserDoc =
+          await _firestore.collection('users').doc(_otherUserId).get();
       if (otherUserDoc.exists) {
         _otherUserUpiId = otherUserDoc.data()?['upiId'] as String?;
       }
@@ -411,10 +412,11 @@ class _UserChatScreenState extends State<UserChatScreen>
       double balance = 0.0;
 
       // Get all expenses where current user is involved
-      final expensesSnapshot = await _firestore
-          .collection('expenses')
-          .where('participants', arrayContains: currentUser.uid)
-          .get();
+      final expensesSnapshot =
+          await _firestore
+              .collection('expenses')
+              .where('participants', arrayContains: currentUser.uid)
+              .get();
 
       for (var expenseDoc in expensesSnapshot.docs) {
         final data = expenseDoc.data();
@@ -430,25 +432,29 @@ class _UserChatScreenState extends State<UserChatScreen>
         // Check if already settled between these two users
         final settlementKey = '${currentUser.uid}_$_otherUserId';
         final reverseSettlementKey = '${_otherUserId}_${currentUser.uid}';
-        if (settled[settlementKey] == true || settled[reverseSettlementKey] == true) {
+        if (settled[settlementKey] == true ||
+            settled[reverseSettlementKey] == true) {
           continue;
         }
 
         // Calculate balance
         if (payerId == currentUser.uid) {
           // Current user paid, other user owes them
-          final otherUserShare = (shares[_otherUserId] as num?)?.toDouble() ?? 0.0;
+          final otherUserShare =
+              (shares[_otherUserId] as num?)?.toDouble() ?? 0.0;
           balance += otherUserShare;
         } else if (payerId == _otherUserId) {
           // Other user paid, current user owes them
-          final currentUserShare = (shares[currentUser.uid] as num?)?.toDouble() ?? 0.0;
+          final currentUserShare =
+              (shares[currentUser.uid] as num?)?.toDouble() ?? 0.0;
           balance -= currentUserShare;
         }
       }
 
       setState(() {
         _balance = balance;
-        _isSettled = balance.abs() < 0.01; // Consider settled if balance is near zero
+        _isSettled =
+            balance.abs() < 0.01; // Consider settled if balance is near zero
         _isLoadingBalance = false;
       });
     } catch (e) {
@@ -468,9 +474,9 @@ class _UserChatScreenState extends State<UserChatScreen>
     // Determine who owes whom
     final amount = _balance.abs();
     if (amount < 0.01) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Already settled up!')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Already settled up!')));
       return;
     }
 
@@ -506,25 +512,26 @@ class _UserChatScreenState extends State<UserChatScreen>
     // Confirm sending request
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Request Settlement'),
-        content: Text(
-          'Send a settlement request to ${widget.groupName} for ${formatter.format(amount)}?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CAF50),
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Request Settlement'),
+            content: Text(
+              'Send a settlement request to ${widget.groupName} for ${formatter.format(amount)}?',
             ),
-            child: const Text('Send Request'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF4CAF50),
+                ),
+                child: const Text('Send Request'),
+              ),
+            ],
           ),
-        ],
-      ),
     );
 
     if (confirmed != true) return;
@@ -537,17 +544,17 @@ class _UserChatScreenState extends State<UserChatScreen>
           .doc(chatId)
           .collection('messages')
           .add({
-        'text': 'Settlement request for ${formatter.format(amount)}',
-        'senderId': currentUser.uid,
-        'senderName': currentUser.displayName ?? 'You',
-        'timestamp': FieldValue.serverTimestamp(),
-        'type': 'settlement_request',
-        'amount': amount,
-        'isSettlementRequest': true,
-        'status': 'pending',
-        'requesterId': currentUser.uid,
-        'payerId': _otherUserId,
-      });
+            'text': 'Settlement request for ${formatter.format(amount)}',
+            'senderId': currentUser.uid,
+            'senderName': currentUser.displayName ?? 'You',
+            'timestamp': FieldValue.serverTimestamp(),
+            'type': 'settlement_request',
+            'amount': amount,
+            'isSettlementRequest': true,
+            'status': 'pending',
+            'requesterId': currentUser.uid,
+            'payerId': _otherUserId,
+          });
 
       // Send push notification
       await PushNotificationHelper.sendSettlementRequestNotification(
@@ -642,9 +649,9 @@ class _UserChatScreenState extends State<UserChatScreen>
         }
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No UPI app found')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('No UPI app found')));
         }
       }
     } catch (e) {
@@ -661,25 +668,24 @@ class _UserChatScreenState extends State<UserChatScreen>
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirm Payment'),
-        content: const Text(
-          'Have you completed the payment successfully?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Not Yet'),
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Confirm Payment'),
+            content: const Text('Have you completed the payment successfully?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Not Yet'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF4CAF50),
+                ),
+                child: const Text('Yes, Paid'),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CAF50),
-            ),
-            child: const Text('Yes, Paid'),
-          ),
-        ],
-      ),
     );
 
     if (confirmed == true) {
@@ -703,17 +709,17 @@ class _UserChatScreenState extends State<UserChatScreen>
           .doc(chatId)
           .collection('messages')
           .add({
-        'text': 'Payment confirmation: ${formatter.format(amount)}',
-        'senderId': currentUser.uid,
-        'senderName': currentUser.displayName ?? 'You',
-        'timestamp': FieldValue.serverTimestamp(),
-        'type': 'payment_confirmation',
-        'amount': amount,
-        'isPaymentConfirmation': true,
-        'status': 'pending',
-        'payerId': currentUser.uid,
-        'recipientId': _otherUserId,
-      });
+            'text': 'Payment confirmation: ${formatter.format(amount)}',
+            'senderId': currentUser.uid,
+            'senderName': currentUser.displayName ?? 'You',
+            'timestamp': FieldValue.serverTimestamp(),
+            'type': 'payment_confirmation',
+            'amount': amount,
+            'isPaymentConfirmation': true,
+            'status': 'pending',
+            'payerId': currentUser.uid,
+            'recipientId': _otherUserId,
+          });
 
       // Send push notification
       await PushNotificationHelper.sendPaymentConfirmationNotification(
@@ -752,10 +758,11 @@ class _UserChatScreenState extends State<UserChatScreen>
       if (currentUser == null || _otherUserId == null) return;
 
       // Update all unsettled expenses between these two users
-      final expensesSnapshot = await _firestore
-          .collection('expenses')
-          .where('participants', arrayContains: currentUser.uid)
-          .get();
+      final expensesSnapshot =
+          await _firestore
+              .collection('expenses')
+              .where('participants', arrayContains: currentUser.uid)
+              .get();
 
       final batch = _firestore.batch();
       final now = DateTime.now();
@@ -768,7 +775,8 @@ class _UserChatScreenState extends State<UserChatScreen>
         final settlementKey = '${currentUser.uid}_$_otherUserId';
         final reverseSettlementKey = '${_otherUserId}_${currentUser.uid}';
 
-        if (settled[settlementKey] != true && settled[reverseSettlementKey] != true) {
+        if (settled[settlementKey] != true &&
+            settled[reverseSettlementKey] != true) {
           batch.update(expenseDoc.reference, {
             'settled.$settlementKey': true,
             'settledAt.$settlementKey': now,
@@ -783,14 +791,14 @@ class _UserChatScreenState extends State<UserChatScreen>
           .doc(chatId)
           .collection('messages')
           .add({
-        'text': 'Payment of ₹${_balance.abs().toStringAsFixed(2)} settled',
-        'senderId': currentUser.uid,
-        'senderName': currentUser.displayName ?? 'You',
-        'timestamp': FieldValue.serverTimestamp(),
-        'type': 'settlement',
-        'amount': _balance.abs(),
-        'isSettlement': true,
-      });
+            'text': 'Payment of ₹${_balance.abs().toStringAsFixed(2)} settled',
+            'senderId': currentUser.uid,
+            'senderName': currentUser.displayName ?? 'You',
+            'timestamp': FieldValue.serverTimestamp(),
+            'type': 'settlement',
+            'amount': _balance.abs(),
+            'isSettlement': true,
+          });
 
       // Send push notification
       await PushNotificationHelper.sendSettlementCompletedNotification(
@@ -839,7 +847,7 @@ class _UserChatScreenState extends State<UserChatScreen>
     debugPrint('═══════════════════════════════════════════════════');
     debugPrint('🚀 _setupMessageStream STARTED');
     debugPrint('═══════════════════════════════════════════════════');
-    
+
     final currentUser = _auth.currentUser;
     if (currentUser == null) {
       debugPrint('❌ Error: No current user in _setupMessageStream');
@@ -854,7 +862,7 @@ class _UserChatScreenState extends State<UserChatScreen>
     // For direct messages (1:1 chat)
     if (widget.groupId == 'direct_message' || widget.members.length == 2) {
       debugPrint('💬 Detected 1:1 chat (direct message)');
-      
+
       // Filter out current user to get the other participant
       final otherUserId = widget.members.firstWhere(
         (id) => id != currentUser.uid,
@@ -1398,7 +1406,9 @@ class _UserChatScreenState extends State<UserChatScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  isMe ? 'You settled up' : '${message['senderName']} settled up',
+                  isMe
+                      ? 'You settled up'
+                      : '${message['senderName']} settled up',
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     color: Colors.green[900],
@@ -1408,10 +1418,7 @@ class _UserChatScreenState extends State<UserChatScreen>
                 const SizedBox(height: 4),
                 Text(
                   'Amount: ${formatter.format(amount)}',
-                  style: TextStyle(
-                    color: Colors.green[800],
-                    fontSize: 13,
-                  ),
+                  style: TextStyle(color: Colors.green[800], fontSize: 13),
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -1426,7 +1433,10 @@ class _UserChatScreenState extends State<UserChatScreen>
     );
   }
 
-  Widget _buildSettlementRequestMessage(Map<String, dynamic> message, bool isMe) {
+  Widget _buildSettlementRequestMessage(
+    Map<String, dynamic> message,
+    bool isMe,
+  ) {
     final amount = (message['amount'] as num?)?.toDouble() ?? 0.0;
     final formatter = NumberFormat.currency(symbol: '₹');
     final status = message['status'] as String? ?? 'pending';
@@ -1438,16 +1448,18 @@ class _UserChatScreenState extends State<UserChatScreen>
       margin: const EdgeInsets.symmetric(vertical: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: status == 'approved'
-            ? Colors.green[50]
-            : status == 'rejected'
+        color:
+            status == 'approved'
+                ? Colors.green[50]
+                : status == 'rejected'
                 ? Colors.red[50]
                 : Colors.orange[50],
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: status == 'approved'
-              ? Colors.green.withOpacity(0.3)
-              : status == 'rejected'
+          color:
+              status == 'approved'
+                  ? Colors.green.withOpacity(0.3)
+                  : status == 'rejected'
                   ? Colors.red.withOpacity(0.3)
                   : Colors.orange.withOpacity(0.3),
         ),
@@ -1461,11 +1473,12 @@ class _UserChatScreenState extends State<UserChatScreen>
                 status == 'approved'
                     ? Icons.check_circle
                     : status == 'rejected'
-                        ? Icons.cancel
-                        : Icons.payment,
-                color: status == 'approved'
-                    ? Colors.green[700]
-                    : status == 'rejected'
+                    ? Icons.cancel
+                    : Icons.payment,
+                color:
+                    status == 'approved'
+                        ? Colors.green[700]
+                        : status == 'rejected'
                         ? Colors.red[700]
                         : Colors.orange[700],
                 size: 24,
@@ -1481,9 +1494,10 @@ class _UserChatScreenState extends State<UserChatScreen>
                           : 'Settlement Request Received',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        color: status == 'approved'
-                            ? Colors.green[900]
-                            : status == 'rejected'
+                        color:
+                            status == 'approved'
+                                ? Colors.green[900]
+                                : status == 'rejected'
                                 ? Colors.red[900]
                                 : Colors.orange[900],
                         fontSize: 14,
@@ -1493,9 +1507,10 @@ class _UserChatScreenState extends State<UserChatScreen>
                     Text(
                       'Amount: ${formatter.format(amount)}',
                       style: TextStyle(
-                        color: status == 'approved'
-                            ? Colors.green[800]
-                            : status == 'rejected'
+                        color:
+                            status == 'approved'
+                                ? Colors.green[800]
+                                : status == 'rejected'
                                 ? Colors.red[800]
                                 : Colors.orange[800],
                         fontSize: 13,
@@ -1569,7 +1584,10 @@ class _UserChatScreenState extends State<UserChatScreen>
     );
   }
 
-  Future<void> _handleSettlementRequest(Map<String, dynamic> message, bool approve) async {
+  Future<void> _handleSettlementRequest(
+    Map<String, dynamic> message,
+    bool approve,
+  ) async {
     try {
       final currentUser = _auth.currentUser;
       if (currentUser == null) return;
@@ -1578,15 +1596,16 @@ class _UserChatScreenState extends State<UserChatScreen>
       if (messageId == null) {
         // Find the message document
         final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
-        final messagesQuery = await _firestore
-            .collection('chats')
-            .doc(chatId)
-            .collection('messages')
-            .where('isSettlementRequest', isEqualTo: true)
-            .where('status', isEqualTo: 'pending')
-            .where('payerId', isEqualTo: currentUser.uid)
-            .limit(1)
-            .get();
+        final messagesQuery =
+            await _firestore
+                .collection('chats')
+                .doc(chatId)
+                .collection('messages')
+                .where('isSettlementRequest', isEqualTo: true)
+                .where('status', isEqualTo: 'pending')
+                .where('payerId', isEqualTo: currentUser.uid)
+                .limit(1)
+                .get();
 
         if (messagesQuery.docs.isEmpty) return;
         final messageDoc = messagesQuery.docs.first;
@@ -1629,49 +1648,56 @@ class _UserChatScreenState extends State<UserChatScreen>
           final confirmed = await showDialog<bool>(
             context: context,
             barrierDismissible: false,
-            builder: (context) => AlertDialog(
-              title: const Text('Confirm Payment'),
-              content: const Text('Have you completed the payment successfully?'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Not Yet'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4CAF50),
+            builder:
+                (context) => AlertDialog(
+                  title: const Text('Confirm Payment'),
+                  content: const Text(
+                    'Have you completed the payment successfully?',
                   ),
-                  child: const Text('Yes, Paid'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Not Yet'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF4CAF50),
+                      ),
+                      child: const Text('Yes, Paid'),
+                    ),
+                  ],
                 ),
-              ],
-            ),
           );
 
           if (confirmed == true) {
             // Update settlement request status
             await messageRef.update({'status': 'approved'});
-            
+
             // Send payment confirmation for approval
             final currentUser = _auth.currentUser;
             if (currentUser != null && _otherUserId != null) {
-              final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
+              final chatId = ChatUtils.generateChatId(
+                currentUser.uid,
+                _otherUserId!,
+              );
               final messageDoc = await _firestore
                   .collection('chats')
                   .doc(chatId)
                   .collection('messages')
                   .add({
-                'text': 'Payment confirmation: ₹${amount.toStringAsFixed(2)}',
-                'senderId': currentUser.uid,
-                'senderName': currentUser.displayName ?? 'You',
-                'timestamp': FieldValue.serverTimestamp(),
-                'type': 'payment_confirmation',
-                'amount': amount,
-                'isPaymentConfirmation': true,
-                'status': 'pending',
-                'payerId': currentUser.uid,
-                'recipientId': _otherUserId,
-              });
+                    'text':
+                        'Payment confirmation: ₹${amount.toStringAsFixed(2)}',
+                    'senderId': currentUser.uid,
+                    'senderName': currentUser.displayName ?? 'You',
+                    'timestamp': FieldValue.serverTimestamp(),
+                    'type': 'payment_confirmation',
+                    'amount': amount,
+                    'isPaymentConfirmation': true,
+                    'status': 'pending',
+                    'payerId': currentUser.uid,
+                    'recipientId': _otherUserId,
+                  });
 
               // Send push notification
               await PushNotificationHelper.sendPaymentConfirmationNotification(
@@ -1685,7 +1711,9 @@ class _UserChatScreenState extends State<UserChatScreen>
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Payment confirmation sent! Waiting for approval...'),
+                    content: Text(
+                      'Payment confirmation sent! Waiting for approval...',
+                    ),
                     backgroundColor: Colors.orange,
                   ),
                 );
@@ -1695,9 +1723,9 @@ class _UserChatScreenState extends State<UserChatScreen>
         }
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No UPI app found')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('No UPI app found')));
         }
       }
     } catch (e) {
@@ -1710,7 +1738,10 @@ class _UserChatScreenState extends State<UserChatScreen>
     }
   }
 
-  Widget _buildPaymentConfirmationMessage(Map<String, dynamic> message, bool isMe) {
+  Widget _buildPaymentConfirmationMessage(
+    Map<String, dynamic> message,
+    bool isMe,
+  ) {
     final amount = (message['amount'] as num?)?.toDouble() ?? 0.0;
     final formatter = NumberFormat.currency(symbol: '₹');
     final status = message['status'] as String? ?? 'pending';
@@ -1722,16 +1753,18 @@ class _UserChatScreenState extends State<UserChatScreen>
       margin: const EdgeInsets.symmetric(vertical: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: status == 'approved'
-            ? Colors.green[50]
-            : status == 'rejected'
+        color:
+            status == 'approved'
+                ? Colors.green[50]
+                : status == 'rejected'
                 ? Colors.red[50]
                 : Colors.blue[50],
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: status == 'approved'
-              ? Colors.green.withOpacity(0.3)
-              : status == 'rejected'
+          color:
+              status == 'approved'
+                  ? Colors.green.withOpacity(0.3)
+                  : status == 'rejected'
                   ? Colors.red.withOpacity(0.3)
                   : Colors.blue.withOpacity(0.3),
         ),
@@ -1745,11 +1778,12 @@ class _UserChatScreenState extends State<UserChatScreen>
                 status == 'approved'
                     ? Icons.check_circle
                     : status == 'rejected'
-                        ? Icons.cancel
-                        : Icons.pending_actions,
-                color: status == 'approved'
-                    ? Colors.green[700]
-                    : status == 'rejected'
+                    ? Icons.cancel
+                    : Icons.pending_actions,
+                color:
+                    status == 'approved'
+                        ? Colors.green[700]
+                        : status == 'rejected'
                         ? Colors.red[700]
                         : Colors.blue[700],
                 size: 24,
@@ -1765,9 +1799,10 @@ class _UserChatScreenState extends State<UserChatScreen>
                           : 'Payment Confirmation Sent',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        color: status == 'approved'
-                            ? Colors.green[900]
-                            : status == 'rejected'
+                        color:
+                            status == 'approved'
+                                ? Colors.green[900]
+                                : status == 'rejected'
                                 ? Colors.red[900]
                                 : Colors.blue[900],
                         fontSize: 14,
@@ -1777,9 +1812,10 @@ class _UserChatScreenState extends State<UserChatScreen>
                     Text(
                       'Amount: ${formatter.format(amount)}',
                       style: TextStyle(
-                        color: status == 'approved'
-                            ? Colors.green[800]
-                            : status == 'rejected'
+                        color:
+                            status == 'approved'
+                                ? Colors.green[800]
+                                : status == 'rejected'
                                 ? Colors.red[800]
                                 : Colors.blue[800],
                         fontSize: 13,
@@ -1795,7 +1831,11 @@ class _UserChatScreenState extends State<UserChatScreen>
             const SizedBox(height: 12),
             const Text(
               'Please verify that you received the payment before approving.',
-              style: TextStyle(fontSize: 11, color: Colors.grey, fontStyle: FontStyle.italic),
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.grey,
+                fontStyle: FontStyle.italic,
+              ),
             ),
             const SizedBox(height: 8),
             Row(
@@ -1871,7 +1911,8 @@ class _UserChatScreenState extends State<UserChatScreen>
   Widget _buildSubscriptionBillingMessage(Map<String, dynamic> message) {
     final subscriptionName = message['subscriptionName'] ?? 'Subscription';
     final totalAmount = (message['totalAmount'] as num?)?.toDouble() ?? 0.0;
-    final perPersonAmount = (message['perPersonAmount'] as num?)?.toDouble() ?? 0.0;
+    final perPersonAmount =
+        (message['perPersonAmount'] as num?)?.toDouble() ?? 0.0;
     final payerName = message['payerName'] ?? 'Unknown';
     final paidBy = message['paidBy'] ?? '';
     final billingCycle = message['billingCycle'] ?? 'Monthly';
@@ -1943,7 +1984,7 @@ class _UserChatScreenState extends State<UserChatScreen>
             ],
           ),
           const SizedBox(height: 16),
-          
+
           // Billing details
           Container(
             padding: const EdgeInsets.all(12),
@@ -1974,7 +2015,7 @@ class _UserChatScreenState extends State<UserChatScreen>
               ],
             ),
           ),
-          
+
           // Action buttons
           if (!isPayerMe) ...[
             const SizedBox(height: 16),
@@ -2025,7 +2066,11 @@ class _UserChatScreenState extends State<UserChatScreen>
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, color: Colors.green.shade700, size: 20),
+                  Icon(
+                    Icons.info_outline,
+                    color: Colors.green.shade700,
+                    size: 20,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -2041,7 +2086,7 @@ class _UserChatScreenState extends State<UserChatScreen>
               ),
             ),
           ],
-          
+
           const SizedBox(height: 8),
           Text(
             _formatTimestamp(message['timestamp']),
@@ -2052,10 +2097,19 @@ class _UserChatScreenState extends State<UserChatScreen>
     );
   }
 
-  Widget _buildBillingDetailRow(String label, String value, IconData icon, {bool highlight = false}) {
+  Widget _buildBillingDetailRow(
+    String label,
+    String value,
+    IconData icon, {
+    bool highlight = false,
+  }) {
     return Row(
       children: [
-        Icon(icon, size: 18, color: highlight ? Colors.orange : Colors.grey.shade600),
+        Icon(
+          icon,
+          size: 18,
+          color: highlight ? Colors.orange : Colors.grey.shade600,
+        ),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
@@ -2084,10 +2138,11 @@ class _UserChatScreenState extends State<UserChatScreen>
       final currentUser = _auth.currentUser;
       if (currentUser == null) return;
 
-      final perPersonAmount = (message['perPersonAmount'] as num?)?.toDouble() ?? 0.0;
+      final perPersonAmount =
+          (message['perPersonAmount'] as num?)?.toDouble() ?? 0.0;
       final paidBy = message['paidBy'] ?? '';
       final subscriptionName = message['subscriptionName'] ?? 'Subscription';
-      
+
       // Get payer's UPI ID
       String? payerUpiId;
       try {
@@ -2112,23 +2167,35 @@ class _UserChatScreenState extends State<UserChatScreen>
       }
 
       // Launch UPI payment
-      final upiUrl = 'upi://pay?pa=$payerUpiId&pn=${message['payerName']}&am=$perPersonAmount&cu=INR&tn=Subscription: $subscriptionName';
+      final upiUrl =
+          'upi://pay?pa=$payerUpiId&pn=${Uri.encodeComponent(message['payerName'] ?? 'Payer')}&am=$perPersonAmount&cu=INR&tn=${Uri.encodeComponent('Subscription: $subscriptionName')}';
       final uri = Uri.parse(upiUrl);
+
+      debugPrint('Launching UPI URL: $upiUrl');
       
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      try {
+        // Try to launch the UPI URL directly without checking canLaunchUrl
+        // as canLaunchUrl often returns false even when UPI apps are installed
+        final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
         
-        // After payment attempt, show confirmation dialog
-        if (mounted) {
-          await Future.delayed(const Duration(seconds: 2));
-          _showSubscriptionPaymentConfirmationDialog(message);
+        if (launched) {
+          debugPrint('UPI app launched successfully');
+          // After payment attempt, show confirmation dialog
+          if (mounted) {
+            await Future.delayed(const Duration(seconds: 2));
+            _showSubscriptionPaymentConfirmationDialog(message);
+          }
+        } else {
+          throw Exception('Failed to launch UPI app');
         }
-      } else {
+      } catch (launchError) {
+        debugPrint('Error launching UPI: $launchError');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('No UPI app found. Please install a UPI app.'),
+              content: Text('No UPI app found. Please install Google Pay, PhonePe, or Paytm.'),
               backgroundColor: Colors.red,
+              duration: Duration(seconds: 4),
             ),
           );
         }
@@ -2146,31 +2213,33 @@ class _UserChatScreenState extends State<UserChatScreen>
     }
   }
 
-  Future<void> _showSubscriptionPaymentConfirmationDialog(Map<String, dynamic> message) async {
-    final perPersonAmount = (message['perPersonAmount'] as num?)?.toDouble() ?? 0.0;
+  Future<void> _showSubscriptionPaymentConfirmationDialog(
+    Map<String, dynamic> message,
+  ) async {
+    final perPersonAmount =
+        (message['perPersonAmount'] as num?)?.toDouble() ?? 0.0;
     final formatter = NumberFormat.currency(symbol: '₹');
-    
+
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirm Payment'),
-        content: Text(
-          'Did you complete the payment of ${formatter.format(perPersonAmount)}?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Not Yet'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Confirm Payment'),
+            content: Text(
+              'Did you complete the payment of ${formatter.format(perPersonAmount)}?',
             ),
-            child: const Text('Yes, Paid'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Not Yet'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                child: const Text('Yes, Paid'),
+              ),
+            ],
           ),
-        ],
-      ),
     );
 
     if (confirmed == true) {
@@ -2178,22 +2247,27 @@ class _UserChatScreenState extends State<UserChatScreen>
     }
   }
 
-  Future<void> _sendSubscriptionPaymentConfirmation(Map<String, dynamic> message) async {
+  Future<void> _sendSubscriptionPaymentConfirmation(
+    Map<String, dynamic> message,
+  ) async {
     try {
       final currentUser = _auth.currentUser;
       if (currentUser == null) return;
 
-      final perPersonAmount = (message['perPersonAmount'] as num?)?.toDouble() ?? 0.0;
+      final perPersonAmount =
+          (message['perPersonAmount'] as num?)?.toDouble() ?? 0.0;
       final paidBy = message['paidBy'] ?? '';
       final subscriptionName = message['subscriptionName'] ?? 'Subscription';
       final formatter = NumberFormat.currency(symbol: '₹');
-      
+
       // Get current user's name
       String senderName = 'User';
       try {
-        final userDoc = await _firestore.collection('users').doc(currentUser.uid).get();
+        final userDoc =
+            await _firestore.collection('users').doc(currentUser.uid).get();
         if (userDoc.exists) {
-          senderName = userDoc.data()?['username'] ?? currentUser.displayName ?? 'User';
+          senderName =
+              userDoc.data()?['username'] ?? currentUser.displayName ?? 'User';
         }
       } catch (e) {
         senderName = currentUser.displayName ?? 'User';
@@ -2205,17 +2279,18 @@ class _UserChatScreenState extends State<UserChatScreen>
           .doc(widget.groupId)
           .collection('messages')
           .add({
-        'text': 'Payment confirmation: ${formatter.format(perPersonAmount)} for $subscriptionName',
-        'senderId': currentUser.uid,
-        'senderName': senderName,
-        'timestamp': FieldValue.serverTimestamp(),
-        'type': 'subscription_payment_confirmation',
-        'amount': perPersonAmount,
-        'subscriptionName': subscriptionName,
-        'recipientId': paidBy,
-        'isPaymentConfirmation': true,
-        'status': 'pending',
-      });
+            'text':
+                'Payment confirmation: ${formatter.format(perPersonAmount)} for $subscriptionName',
+            'senderId': currentUser.uid,
+            'senderName': senderName,
+            'timestamp': FieldValue.serverTimestamp(),
+            'type': 'subscription_payment_confirmation',
+            'amount': perPersonAmount,
+            'subscriptionName': subscriptionName,
+            'recipientId': paidBy,
+            'isPaymentConfirmation': true,
+            'status': 'pending',
+          });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2238,33 +2313,70 @@ class _UserChatScreenState extends State<UserChatScreen>
     }
   }
 
-  Future<void> _handlePaymentConfirmation(Map<String, dynamic> message, bool approve) async {
+  Future<void> _handlePaymentConfirmation(
+    Map<String, dynamic> message,
+    bool approve,
+  ) async {
     try {
       final currentUser = _auth.currentUser;
       if (currentUser == null) return;
 
-      // Find the payment confirmation message
-      final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
-      final messagesQuery = await _firestore
-          .collection('chats')
-          .doc(chatId)
-          .collection('messages')
-          .where('isPaymentConfirmation', isEqualTo: true)
-          .where('status', isEqualTo: 'pending')
-          .where('recipientId', isEqualTo: currentUser.uid)
-          .limit(1)
-          .get();
+      // Determine if this is a group chat or 1:1 chat
+      final isGroupChat = widget.groupId != 'direct_message' && widget.members.length > 2;
+      
+      QuerySnapshot messagesQuery;
+      
+      if (isGroupChat) {
+        // For group chats, use the groups collection
+        messagesQuery = await _firestore
+            .collection('groups')
+            .doc(widget.groupId)
+            .collection('messages')
+            .where('isPaymentConfirmation', isEqualTo: true)
+            .where('status', isEqualTo: 'pending')
+            .where('recipientId', isEqualTo: currentUser.uid)
+            .get();
+      } else {
+        // For 1:1 chats, use the chats collection
+        final chatId = ChatUtils.generateChatId(currentUser.uid, _otherUserId!);
+        messagesQuery = await _firestore
+            .collection('chats')
+            .doc(chatId)
+            .collection('messages')
+            .where('isPaymentConfirmation', isEqualTo: true)
+            .where('status', isEqualTo: 'pending')
+            .where('recipientId', isEqualTo: currentUser.uid)
+            .limit(1)
+            .get();
+      }
 
-      if (messagesQuery.docs.isEmpty) return;
+      if (messagesQuery.docs.isEmpty) {
+        debugPrint('No pending payment confirmation found');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No pending payment confirmation found'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+      
       final messageDoc = messagesQuery.docs.first;
 
       if (approve) {
         // Update confirmation status
-        await messageDoc.reference.update({'status': 'approved'});
-        
-        // Record the settlement
-        await _recordSettlement();
-        
+        await messageDoc.reference.update({
+          'status': 'approved',
+          'approvedAt': FieldValue.serverTimestamp(),
+        });
+
+        // Record the settlement (for 1:1 chats)
+        if (!isGroupChat) {
+          await _recordSettlement();
+        }
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -2275,8 +2387,11 @@ class _UserChatScreenState extends State<UserChatScreen>
         }
       } else {
         // Reject the payment confirmation
-        await messageDoc.reference.update({'status': 'rejected'});
-        
+        await messageDoc.reference.update({
+          'status': 'rejected',
+          'rejectedAt': FieldValue.serverTimestamp(),
+        });
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -2290,9 +2405,10 @@ class _UserChatScreenState extends State<UserChatScreen>
       debugPrint('Error handling payment confirmation: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to process confirmation'),
+          SnackBar(
+            content: Text('Failed to process confirmation: ${e.toString()}'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
           ),
         );
       }
@@ -2525,28 +2641,34 @@ class _UserChatScreenState extends State<UserChatScreen>
               onPressed: () async {
                 // Fetch group details to get member information
                 try {
-                  final groupDoc = await _firestore.collection('groups').doc(widget.groupId).get();
+                  final groupDoc =
+                      await _firestore
+                          .collection('groups')
+                          .doc(widget.groupId)
+                          .get();
                   if (groupDoc.exists) {
                     final groupData = groupDoc.data();
                     List<dynamic> memberDetails = [];
-                    
+
                     if (groupData?['memberDetails'] != null) {
                       memberDetails = groupData!['memberDetails'];
                     } else if (groupData?['members'] != null) {
-                      memberDetails = (groupData!['members'] as List)
-                          .map((id) => {'id': id, 'username': id})
-                          .toList();
+                      memberDetails =
+                          (groupData!['members'] as List)
+                              .map((id) => {'id': id, 'username': id})
+                              .toList();
                     }
-                    
+
                     if (mounted) {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => SubscriptionScreen(
-                            groupId: widget.groupId,
-                            groupName: widget.groupName,
-                            members: memberDetails,
-                          ),
+                          builder:
+                              (context) => SubscriptionScreen(
+                                groupId: widget.groupId,
+                                groupName: widget.groupName,
+                                members: memberDetails,
+                              ),
                         ),
                       );
                     }
@@ -2555,7 +2677,9 @@ class _UserChatScreenState extends State<UserChatScreen>
                   debugPrint('Error opening subscriptions: $e');
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Failed to open subscriptions')),
+                      const SnackBar(
+                        content: Text('Failed to open subscriptions'),
+                      ),
                     );
                   }
                 }
@@ -2566,64 +2690,84 @@ class _UserChatScreenState extends State<UserChatScreen>
       body: Column(
         children: [
           Expanded(
-            child: _messagesStream == null
-                ? const Center(child: CircularProgressIndicator())
-                : StreamBuilder<QuerySnapshot>(
-                    stream: _messagesStream,
-                    builder: (context, snapshot) {
-                      debugPrint(
-                        'StreamBuilder snapshot state: ${snapshot.connectionState}',
-                      );
-                      debugPrint('Has data: ${snapshot.hasData}');
-                      debugPrint('Data docs count: ${snapshot.data?.docs.length ?? 0}');
-                      
-                      if (snapshot.hasError) {
-                        debugPrint('Stream error: ${snapshot.error}');
-                        return Center(child: Text('Error loading messages: ${snapshot.error}'));
-                      }
+            child:
+                _messagesStream == null
+                    ? const Center(child: CircularProgressIndicator())
+                    : StreamBuilder<QuerySnapshot>(
+                      stream: _messagesStream,
+                      builder: (context, snapshot) {
+                        debugPrint(
+                          'StreamBuilder snapshot state: ${snapshot.connectionState}',
+                        );
+                        debugPrint('Has data: ${snapshot.hasData}');
+                        debugPrint(
+                          'Data docs count: ${snapshot.data?.docs.length ?? 0}',
+                        );
 
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
-
-                      if (!snapshot.hasData) {
-                        debugPrint('No data in snapshot');
-                        return const Center(child: Text('No messages yet'));
-                      }
-
-                      final messages = snapshot.data!.docs;
-                      debugPrint('Displaying ${messages.length} messages');
-
-                      if (messages.isEmpty) {
-                        return const Center(child: Text('No messages yet. Start the conversation!'));
-                      }
-
-                      return ListView.builder(
-                        reverse: true,
-                        padding: const EdgeInsets.all(16),
-                        itemCount: messages.length,
-                        itemBuilder: (context, index) {
-                          final message =
-                              messages[index].data() as Map<String, dynamic>;
-                          final isMe = message['senderId'] == _auth.currentUser?.uid;
-
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4.0),
-                            child: Align(
-                              alignment:
-                                  isMe ? Alignment.centerRight : Alignment.centerLeft,
-                              child: ConstrainedBox(
-                                constraints: BoxConstraints(
-                                  maxWidth: MediaQuery.of(context).size.width * 0.8,
-                                ),
-                                child: _buildMessageBubble(message, isMe),
-                              ),
+                        if (snapshot.hasError) {
+                          debugPrint('Stream error: ${snapshot.error}');
+                          return Center(
+                            child: Text(
+                              'Error loading messages: ${snapshot.error}',
                             ),
                           );
-                        },
-                      );
-                    },
-                  ),
+                        }
+
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+
+                        if (!snapshot.hasData) {
+                          debugPrint('No data in snapshot');
+                          return const Center(child: Text('No messages yet'));
+                        }
+
+                        final messages = snapshot.data!.docs;
+                        debugPrint('Displaying ${messages.length} messages');
+
+                        if (messages.isEmpty) {
+                          return const Center(
+                            child: Text(
+                              'No messages yet. Start the conversation!',
+                            ),
+                          );
+                        }
+
+                        return ListView.builder(
+                          reverse: true,
+                          padding: const EdgeInsets.all(16),
+                          itemCount: messages.length,
+                          itemBuilder: (context, index) {
+                            final message =
+                                messages[index].data() as Map<String, dynamic>;
+                            final isMe =
+                                message['senderId'] == _auth.currentUser?.uid;
+
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 4.0,
+                              ),
+                              child: Align(
+                                alignment:
+                                    isMe
+                                        ? Alignment.centerRight
+                                        : Alignment.centerLeft,
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxWidth:
+                                        MediaQuery.of(context).size.width * 0.8,
+                                  ),
+                                  child: _buildMessageBubble(message, isMe),
+                                ),
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
           ),
           const Divider(height: 1),
           Padding(
@@ -2678,58 +2822,65 @@ class _UserChatScreenState extends State<UserChatScreen>
                 ),
                 child: Opacity(
                   opacity: _fadeAnimation.value,
-                  child: _isLoadingBalance
-                      ? const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(16.0),
-                          child: CircularProgressIndicator(),
-                        ),
-                      )
-                      : SizedBox(
-                        width: double.infinity,
-                        child: Column(
-                          children: [
-                            if (!_isSettled && _balance.abs() >= 0.01)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 8.0),
-                                child: Text(
-                                  _balance > 0
-                                      ? 'They owe you: ₹${_balance.toStringAsFixed(2)}'
-                                      : 'You owe: ₹${_balance.abs().toStringAsFixed(2)}',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: _balance > 0 ? Colors.green[700] : Colors.red[700],
+                  child:
+                      _isLoadingBalance
+                          ? const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(16.0),
+                              child: CircularProgressIndicator(),
+                            ),
+                          )
+                          : SizedBox(
+                            width: double.infinity,
+                            child: Column(
+                              children: [
+                                if (!_isSettled && _balance.abs() >= 0.01)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 8.0),
+                                    child: Text(
+                                      _balance > 0
+                                          ? 'They owe you: ₹${_balance.toStringAsFixed(2)}'
+                                          : 'You owe: ₹${_balance.abs().toStringAsFixed(2)}',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                        color:
+                                            _balance > 0
+                                                ? Colors.green[700]
+                                                : Colors.red[700],
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
-                            ElevatedButton(
-                              onPressed: _isSettled ? null : _initiateSettlement,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF4CAF50),
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                elevation: 2,
-                                disabledBackgroundColor: Colors.grey[400],
-                              ),
-                              child: Text(
-                                _isSettled
-                                    ? 'All settled up! ✓'
-                                    : _balance > 0
+                                ElevatedButton(
+                                  onPressed:
+                                      _isSettled ? null : _initiateSettlement,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF4CAF50),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 16,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    elevation: 2,
+                                    disabledBackgroundColor: Colors.grey[400],
+                                  ),
+                                  child: Text(
+                                    _isSettled
+                                        ? 'All settled up! ✓'
+                                        : _balance > 0
                                         ? 'Request Settlement'
                                         : 'Settle up payment!',
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                              ],
                             ),
-                          ],
-                        ),
-                      ),
+                          ),
                 ),
               );
             },

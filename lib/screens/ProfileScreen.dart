@@ -27,11 +27,50 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _loadUpiId();
   }
 
-  // Load username from SharedPreferences
+  // Load username from Firestore, Firebase Auth, or fallback to SharedPreferences
   Future<void> _loadUsername() async {
+    final currentUser = _auth.currentUser;
+    
+    if (currentUser == null) {
+      setState(() {
+        userName = "Guest";
+      });
+      return;
+    }
+    
+    try {
+      // First try to get username from Firestore
+      final userDoc = await _firestore.collection('users').doc(currentUser.uid).get();
+      if (userDoc.exists) {
+        final firestoreUsername = userDoc.data()?['username'] as String?;
+        if (firestoreUsername != null && firestoreUsername.isNotEmpty) {
+          setState(() {
+            userName = firestoreUsername;
+          });
+          // Also save to SharedPreferences for offline access
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString("username", firestoreUsername);
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading username from Firestore: $e');
+    }
+    
+    // Fallback to Firebase Auth display name
+    if (currentUser.displayName != null && currentUser.displayName!.isNotEmpty) {
+      setState(() {
+        userName = currentUser.displayName!;
+      });
+      return;
+    }
+    
+    // Fallback to SharedPreferences
     final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final savedName = prefs.getString("username");
+    
     setState(() {
-      userName = prefs.getString("username") ?? "Guest";
+      userName = savedName ?? "Guest";
     });
   }
 
