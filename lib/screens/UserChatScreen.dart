@@ -38,7 +38,7 @@ class _UserChatScreenState extends State<UserChatScreen>
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseMessaging _fcm = FirebaseMessaging.instance;
-  late final Stream<QuerySnapshot> _messagesStream;
+  Stream<QuerySnapshot>? _messagesStream;
   bool _isSettled = false;
   double _balance = 0.0;
   bool _isLoadingBalance = true;
@@ -326,7 +326,9 @@ class _UserChatScreenState extends State<UserChatScreen>
       await _saveFCMToken();
 
       // Setup FCM message listeners
-      _setupFCMListeners();
+      // NOTE: Commented out to prevent duplicate listeners
+      // FCM listeners should be set up globally in main.dart or a service
+      // _setupFCMListeners();
 
       // Request notification permissions
       await _requestNotificationPermissions();
@@ -834,44 +836,55 @@ class _UserChatScreenState extends State<UserChatScreen>
   }
 
   Future<void> _setupMessageStream() async {
+    debugPrint('═══════════════════════════════════════════════════');
+    debugPrint('🚀 _setupMessageStream STARTED');
+    debugPrint('═══════════════════════════════════════════════════');
+    
     final currentUser = _auth.currentUser;
     if (currentUser == null) {
-      debugPrint('Error: No current user in _setupMessageStream');
+      debugPrint('❌ Error: No current user in _setupMessageStream');
       return;
     }
 
-    debugPrint('Setting up message stream for group: ${widget.groupId}');
-    debugPrint('Members: ${widget.members}');
+    debugPrint('✅ Current user authenticated: ${currentUser.uid}');
+    debugPrint('📋 Group ID: ${widget.groupId}');
+    debugPrint('👥 Members: ${widget.members}');
+    debugPrint('📝 Group Name: ${widget.groupName}');
 
     // For direct messages (1:1 chat)
     if (widget.groupId == 'direct_message' || widget.members.length == 2) {
+      debugPrint('💬 Detected 1:1 chat (direct message)');
+      
       // Filter out current user to get the other participant
       final otherUserId = widget.members.firstWhere(
         (id) => id != currentUser.uid,
         orElse: () => '',
       );
 
-      debugPrint('Found other user ID: $otherUserId');
+      debugPrint('🔍 Found other user ID: $otherUserId');
 
       if (otherUserId.isNotEmpty) {
         // Create a consistent chat ID using both user IDs
         final chatId = ChatUtils.generateChatId(currentUser.uid, otherUserId);
 
-        debugPrint('Setting up 1:1 message stream for chat ID: $chatId');
-        debugPrint('Current user: ${currentUser.uid}');
-        debugPrint('Other user: $otherUserId');
+        debugPrint('🆔 Generated chat ID: $chatId');
+        debugPrint('👤 Current user: ${currentUser.uid}');
+        debugPrint('👤 Other user: $otherUserId');
 
         try {
           // Set up the message stream for this chat
-          _messagesStream =
-              _firestore
-                  .collection('chats')
-                  .doc(chatId)
-                  .collection('messages')
-                  .orderBy('timestamp', descending: true)
-                  .snapshots();
+          setState(() {
+            _messagesStream =
+                _firestore
+                    .collection('chats')
+                    .doc(chatId)
+                    .collection('messages')
+                    .orderBy('timestamp', descending: true)
+                    .snapshots();
+          });
 
-          debugPrint('1:1 Message stream created for chat: $chatId');
+          debugPrint('✅ 1:1 Message stream created for chat: $chatId');
+          debugPrint('📡 Stream is now active and listening for messages');
 
           // Get the other user's display name if not already provided
           String otherUserName = widget.groupName;
@@ -906,13 +919,14 @@ class _UserChatScreenState extends State<UserChatScreen>
             'lastMessageTime': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
 
-          debugPrint('Successfully updated 1:1 chat metadata for: $chatId');
+          debugPrint('✅ Successfully updated 1:1 chat metadata for: $chatId');
+          debugPrint('═══════════════════════════════════════════════════');
           return;
         } catch (e) {
-          debugPrint('Error setting up 1:1 message stream: $e');
+          debugPrint('❌ Error setting up 1:1 chat stream: $e');
         }
       } else {
-        debugPrint('Error: Could not determine other user ID for 1:1 chat');
+        debugPrint('❌ Error: Could not determine other user ID for 1:1 chat');
       }
     }
 
@@ -920,13 +934,15 @@ class _UserChatScreenState extends State<UserChatScreen>
     debugPrint(
       'Setting up group message stream for group ID: ${widget.groupId}',
     );
-    _messagesStream =
-        _firestore
-            .collection('groups')
-            .doc(widget.groupId)
-            .collection('messages')
-            .orderBy('timestamp', descending: true)
-            .snapshots();
+    setState(() {
+      _messagesStream =
+          _firestore
+              .collection('groups')
+              .doc(widget.groupId)
+              .collection('messages')
+              .orderBy('timestamp', descending: true)
+              .snapshots();
+    });
   }
 
   Future<void> _sendMessage() async {
@@ -2550,51 +2566,64 @@ class _UserChatScreenState extends State<UserChatScreen>
       body: Column(
         children: [
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: _messagesStream,
-              builder: (context, snapshot) {
-                debugPrint(
-                  'StreamBuilder snapshot state: ${snapshot.connectionState}',
-                );
-                if (snapshot.hasError) {
-                  debugPrint('Stream error: ${snapshot.error}');
-                }
-                if (snapshot.hasError) {
-                  return Center(child: Text('Error loading messages'));
-                }
+            child: _messagesStream == null
+                ? const Center(child: CircularProgressIndicator())
+                : StreamBuilder<QuerySnapshot>(
+                    stream: _messagesStream,
+                    builder: (context, snapshot) {
+                      debugPrint(
+                        'StreamBuilder snapshot state: ${snapshot.connectionState}',
+                      );
+                      debugPrint('Has data: ${snapshot.hasData}');
+                      debugPrint('Data docs count: ${snapshot.data?.docs.length ?? 0}');
+                      
+                      if (snapshot.hasError) {
+                        debugPrint('Stream error: ${snapshot.error}');
+                        return Center(child: Text('Error loading messages: ${snapshot.error}'));
+                      }
 
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
 
-                final messages = snapshot.data?.docs ?? [];
+                      if (!snapshot.hasData) {
+                        debugPrint('No data in snapshot');
+                        return const Center(child: Text('No messages yet'));
+                      }
 
-                return ListView.builder(
-                  reverse: true,
-                  padding: const EdgeInsets.all(16),
-                  itemCount: messages.length,
-                  itemBuilder: (context, index) {
-                    final message =
-                        messages[index].data() as Map<String, dynamic>;
-                    final isMe = message['senderId'] == _auth.currentUser?.uid;
+                      final messages = snapshot.data!.docs;
+                      debugPrint('Displaying ${messages.length} messages');
 
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4.0),
-                      child: Align(
-                        alignment:
-                            isMe ? Alignment.centerRight : Alignment.centerLeft,
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: MediaQuery.of(context).size.width * 0.8,
-                          ),
-                          child: _buildMessageBubble(message, isMe),
-                        ),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
+                      if (messages.isEmpty) {
+                        return const Center(child: Text('No messages yet. Start the conversation!'));
+                      }
+
+                      return ListView.builder(
+                        reverse: true,
+                        padding: const EdgeInsets.all(16),
+                        itemCount: messages.length,
+                        itemBuilder: (context, index) {
+                          final message =
+                              messages[index].data() as Map<String, dynamic>;
+                          final isMe = message['senderId'] == _auth.currentUser?.uid;
+
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0),
+                            child: Align(
+                              alignment:
+                                  isMe ? Alignment.centerRight : Alignment.centerLeft,
+                              child: ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  maxWidth: MediaQuery.of(context).size.width * 0.8,
+                                ),
+                                child: _buildMessageBubble(message, isMe),
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
           ),
           const Divider(height: 1),
           Padding(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/signup_screen.dart';
 import 'firebase_config.dart';
 import 'services/notification_service.dart';
 import 'services/navigation_service.dart';
@@ -82,7 +83,7 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  Widget _defaultScreen = const Scaffold(body: Center(child: CircularProgressIndicator()));
+  Widget? _defaultScreen;
   String? _error;
 
   @override
@@ -98,9 +99,9 @@ class _MyAppState extends State<MyApp> {
       
       if (mounted) {
         setState(() {
-_defaultScreen = (token != null && token.isNotEmpty)
+          _defaultScreen = (token != null && token.isNotEmpty)
               ? const HomeScreen()
-              : const LoginScreen();
+              : const SignupScreen(); // Changed from LoginScreen to SignupScreen
         });
       }
     } catch (e, stackTrace) {
@@ -109,7 +110,7 @@ _defaultScreen = (token != null && token.isNotEmpty)
       
       if (mounted) {
         setState(() {
-_error = 'Error loading app data. Please try again.';
+          _error = 'Error loading app data. Please try again.';
         });
       }
     }
@@ -145,7 +146,7 @@ _error = 'Error loading app data. Please try again.';
                 ),
               ),
             )
-          : _defaultScreen,
+          : _defaultScreen ?? const SignupScreen(), // Show SignupScreen immediately if _defaultScreen is null
     );
   }
 }
